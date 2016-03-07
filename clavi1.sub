@@ -1,1 +1,1232 @@
-////          CLAVICOM SOURCE CODE FILE 1////    Filename:               clavi1.sub//    Programmer:             Richard Brooksby//    Source language:        BCPL//    Last updated:           07DEC87//// Copyright (C) 1987, 1999 Richard Brooksby.  All rights reserved.  You// may make and distribute verbatim copies of this document provided that// you retain as they appear all copyright and licence notices.  You may// NOT charge a fee for this document or for distributing this document. // You may NOT make or distribute derivative works (modified versions) of// this document without the express written permission of the copyright// holder.//// This copyright notice was added on 1999-09-20.////////////////////////// LOW LEVEL DRIVING ROUTINES //////////////////////////// These routines access the AMSTRAD firmware. They allow BCPL to access// standard routines built into the machines operating system (refered to as// the firmware). In effect they are adding machine-specific features to the// language.//    SOUND ROUTINES//    ADD A SOUND TO THE SOUND QUEUES// The parameter is the address of an array, which contains the following// information:// status, tone period, duration, start volume, volume env, tone env, noise.// The firmware routine demands data in the central 32K of memory, so the// hardware stack is used.let sound(array) be$(      let a1,a2,a3,a4,a5 = 0, 0, 0, 0, 0   // an array on the hardware stack      let sbase = @a5      sbase%0 := array!0      // Copy the supplied data onto the stack,      sbase%1 := array!4      // in a form suitable for the firmware routine:      sbase%2 := array!5      // SOUND_QUEUE      sbase%3 := array%2      sbase%4 := array%3      sbase%5 := array!6      sbase%6 := array!3      sbase%7 := array%4      sbase%8 := array%5      inline 33,110,0         // ld hl,110      inline 221,229,221,229  // push ix, push ix      inline 209              // pop de      inline 25               // add hl,de      inline 205,#xAA,#xBC    // call sound queue      inline 221,225          // pop ix$)//    SET A TONE ENVELOPE// This routine uses the hardware stack in a similar way to sound(). The number// supplied is the envelope number being set, and the other parameter points to// an array containing: 1,    the number of envelope sections//                            2,3,4 the first section//                            5,6,7 the second section, etclet set_tone_env(number,envelope) be$(      let a0,a1,a2,a3,a4,a5,a6,a7 = 0,0,0,0,0,0,0,0  // 16 bytes      let entbase = @a7      for i=0 to 15            entbase%i := envelope!i      inline 33,102,0               // ld hl,102      inline 221,229,221,229        // push ix:push ix      inline 209                    // pop de      inline 25                     // add hl,de      inline 221,126,124            // ld a,(ix+124)      inline 205,#xbf,#xbc          // call sound tone envelope      inline 221,225                // pop ix$)//    SET A VOLUME ENVELOPE// see set_tone_env()let set_vol_env(number,envelope) be$(      let a0,a1,a2,a3,a4,a5,a6,a7 = 0,0,0,0,0,0,0,0  // 16 bytes      let entbase = @a7      for i=0 to 15            entbase%i := envelope!i      inline 33,102,0               // ld hl,102      inline 221,229,221,229        // push ix:push ix      inline 209                    // pop de      inline 25                     // add hl,de      inline 221,126,124            // ld a,(ix+124)      inline 205,#xbc,#xbc          // call sound ampl envelope      inline 221,225                // pop ix$)//    TEXT ROUTINES//    CLEAR THE CURRENT TEXT WINDOWlet cls() be$(      inline 205,#x6C,#xBB          // call txt clear window$)//    SET THE SCREEN MODE.// Mode 2 has 80 columns and 25 lines. This command clears all windows.let mode(n) be$(      inline 221,126,126            // ld a,(ix+126)      inline 205,#x0E,#xBC          // call scr set mode$)//    SELECT A STREAM FOR TEXT OUTPUT// Streams 0 to 7 refer to windows on the text screen.let stream(number) be$(      inline 221,126,126            // ld a,(ix+126)      inline 205,#xB4,#xBB          // call txt str select$)//    DEFINE A TEXT WINDOW ON THE SCREEN// The window is set on the current text stream. The limits given are the// inclusive edges of the window.let window(left,right,top,bottom) be$(      left,right,top,bottom := left-1,right-1,top-1,bottom-1      inline #xDD,#x6E,126          // ld l,(ix+126)      inline #xDD,#x5E,124          // ld e,(ix+124)      inline #xDD,#x66,122          // ld h,(ix+122)      inline #xDD,#x56,120          // ld d,(ix+120)      inline #xCD,#x66,#xBB         // call txt win enable$)//    TEST WHETHER A KEY HAS BEEN PRESSED// Return a true flag if a key has been pressed since the last call of this// routine.let key_pressed() = valof$(      let flag=0      inline #xCD,#x09,#xBB         // call km read char      inline #x30,4                 // jr nc,$+4      inline #xDD,#x36,120,1        // ld (ix+120),1      resultis flag$)//    FADE SCREEN// The routines are used to give (relatively) gradual changes in screen// intensity. This is done by using control code #x1C, which changes the colour// of an ink. On the screen the effect is similar to a fade-out on television.// By fading the screen unsightly update effects can be avoided.let fade_out() be      for i=25 to 1 by -1            printf("*x1C1%c%c",i,i)let fade_in() be      for i=1 to 25            printf("*x1C1%c%c",i,i)////////////////////////// DATA MANIPULATION ROUTINES //////////////////////////// These routines are concerned with the manipulation of data, but are not// specifically to do with music, or indeed this program.//    READ DATA INTO A VECTOR// This routine is used to initialise an array with a list of values at runtime.// The data supplied is as a list of parameters, and the end of the list is// marked with a value equal to the end_marker parameter.let read_data(vector,end_marker,data...) = valof$(      static $( datum_ptr = 0 $)      // datum ptr points to the first datum      datum_ptr := @data...      until !datum_ptr = end_marker      $(            !vector := !datum_ptr            vector, datum_ptr := vector+1, datum_ptr+1      $)       resultis datum_ptr-@data...$)//    LIMIT A NUMBER BETWEEN TWO VALUES// This routine is widely used to stop user input from exceeding the legal// limits for that value. e.g. legal notes run from 0 to 12.let limit(number,lower,upper) = valof$(      if number>upper            resultis upper      if number<lower            resultis lower      resultis number$)//    CONVERT A LETTER TO UPPER CASElet upper(ch) = 'a' <= ch <= 'z' -> ch-32, ch//    INPUT A NUMBER FROM THE KEYBOARD// The digits are read into a byte array, and the final value calculated from// the contents of the array when the ENTER key is pressed.let getint() = valof$(      let digit=vec 5 and next=0 and value=0 and sign=1      $(            // Get key from keyboard            key := getchar()            // Check for legal digits            if '0' <= key <= '9' | key='-'            $(                  // Echo the key to the screen                  putchar(key)                  // Put the digit value into the array                  digit!next := key                  next := next+1            $)            // Check for the DELETE key            if key=127 & next>0            $(                  // Step back in the digit array, and wipe the last digit from                  // the screen.                  next := next-1                  puts("*b*x10")            $)      $)      repeatuntil next>5 | key=13      // Calculate the value of the typed number      for i=0 to next-1            test digit!i = '-'                  sign := -1            else                  value := value*10 + digit!i - '0'      resultis value*sign$)///////////////////////// MUSIC MANIPULATION ROUTINES //////////////////////////// These are data manipulation routines which are specifically to do with the// music arrays (event_time! and event!).//    TRANSPOSE A NOTE BY A GIVEN NUMBER OF SEMITONES// This function alters the note number and octave of the note. If a note goes// below the lowest octave, or above the highest, then the note is shifted BY// OCTAVE back into legal range.let trans_note(note_data,offset) = valof$(      static $( note = void; octave = void $)      // non-sounds are not effected      unless note_data & #x0F            resultis note_data      // Convert the note to a sliding scale ranging from C, octave -3      note := (note_data & #x0F)-1 + 12*((note_data & #xF0) >> 4)      // Add the offset      note := note+offset      // Convert the note back again      octave := note/12      note := (note rem 12) +1      // Return the note data in compressed form      resultis (octave<<4) | note$)//    SEARCH FOR THE FIRST EVENT AFTER OR ON A SPECIFIED TIME// Returns the event number, ot free_space if there are none.let event_after(time) = valof$(      for i=0 to free_space-1            if event_time!i >= time then resultis i      resultis free_space$)//    FIND AN EVENT TYPE AT A CERTAIN TIME// The type supplied is the top byte of the event! array data to be found. If// the type supplied is -1, then any negative event (ie a go to bar) will match.// The routine returns -1 if no matching event is found at the specified time,// and then stores the position where such an event could be inserted in the// global variable placing.let find_event(time,type) = valof$(      static $( ev = void $)      // Find the first event at the specified time      ev := event_after(time)      // Examine all events at that time for a match.      while event_time!ev = time & ev < free_space      $(            // Match found?            if type = (event!ev>>8) | (type=-1 & event!ev<0)                  resultis ev            ev := ev+1      $)      // No match found      placing := ev      resultis -1$)//    INSERT A NEW EVENT// Returns a flag which is true if there was room in the music array for the// new event.// This routine updates block_ev so the block can be traced whilst inserting.let insert_event(ev,time,data) = valof$(      // Check that there is room in the music array      if free_space=music_size            resultis false      // Shift all the music data up by one position      for i=free_space to ev+1 by -1      $(            event_time!i := event_time!(i-1)            event!i := event!(i-1)      $)      // Update block_ev is it was shifted with the other data.      if block_ev>=ev            block_ev := block_ev+1      // Insert the new data      free_space := free_space+1      event_time!ev := time      event!ev := data      resultis true$)//    DELETE AN EVENT// This routine updates block_ev so the block can be traced whilst deleting.let delete_event(ev) be$(      // Check for a legal deletion, ie within the music      unless 0<=ev<=free_space-1            return      // Shift all the following data down by one position.      free_space := free_space-1      for i=ev to free_space-1      $(            event_time!i := event_time!(i+1)            event!i := event!(i+1)      $)      // Update block_ev if it was shifted too.      if block_ev>ev            block_ev := block_ev-1$)//    IS AN EVENT ON A CERTAIN CHANNEL?// returns a true flag if so.// Channels are numbered: A=0, B=1, C=2, N=3, anything else=4let is_on_chan(ev,channel) = valof$(      // Extract that part of an event which sets the channel      ev := event!ev >> 8      // Does a channel apply to the event?      if ev>=12            resultis channel=4      // Is it a noise?      if 3<=ev<=5            resultis channel=3      // Check if it is on the channel      resultis (ev rem 3) = channel$)//    DELETE EVENTS ON A SPECIFIED CHANNEL BETWEEN TWO LIMITS// NB the search is done backwards, since the limits change when and event// is deleted. If channel=4 then control events are deletedlet del_events(start,end,channel) be      for i=end to start by -1            if is_on_chan(i,channel)                  delete_event(i)//    COUNT THE EVENTS ON A CHANNEL BETWEEN TWO LIMITS// The channel numbers are those given for is_on_chan()let count_events(start,end,channel) = valof$(      static $( count = void $)      // Start with no events      count := 0      // Check between the limits for events      for i=start to end            if is_on_chan(i,channel)                  count := count+1      resultis count$)//    CALCULATE THE ADDRESS OF AN ENVELOPES DATA// All the envelope data is stored in one large array. This routine calculates// the address of the data of the envelope letter given. Type is zero for// volume envelopes, and one for tone envelopes.let env_address(type,env) = envelopes + (env-'A')*16 + (type -> 0, 16*15)//    SET UP ALL THE ENVELOPES FROM THE TABLE// This routine sends all the envelope data in the envelopes! array to the// firmware.let set_all_env() be$(      // Send all the new envelope data to the firmware      for type=0 to 1      $(            for env='A' to 'O'            $(                  test type                        set_vol_env( env-'A'+1, env_address(type,env))                  else                        set_tone_env( env-'A'+1, env_address(type,env))            $)      $)$)//    FIND THE FIRST EVENT IN THE BLOCK// This routine puts the first event number into block_ev.// Leaves -1 in block_ev if there are none.// see also: insert_event, delete_eventlet find_first() be$(      // Find the first event on any channel      block_ev := event_after(bl_start)      // If block_ev is not on the right channel, search for the first event on      // the block channel, and within both the music and the block.      unless is_on_chan(block_ev,bl_channel)            find_next()$)//    FIND THE NEXT EVENT IN THE BLOCK// leaves -1 in block_ev if there are no more.and find_next() be$(      if block_ev=-1            return      // Start searching for an event which is in the block      $(            block_ev := block_ev+1            // Stop searchin if the event is outside the music or the block.            if event_time!block_ev > bl_end | block_ev>=free_space            $(                  block_ev := -1                  return            $)      $)      repeatuntil is_on_chan(block_ev,bl_channel)$)//////////////////////////// MUSIC DISPLAY ROUTINES ////////////////////////////// These routines deal with the display of the music on the screen.//    DISPLAY AN EVENT TIME AS xxxbyyy// where xxx is a bar number, and yyy is the beat number within the bar.// The printed time will not exceed 9 characters in length.let disp_beat(time) be      printf("%5db%d ", time/bar_length+1, time rem bar_length +1 )//    CALCULATE POSITION IN MUSIC_WNDW OF AN EVENT// These functions return the column and row positions of an event.let ev_column(time) = 3*(time-left_edge)+2let ev_row(channel) = 4*(channel rem 3)//    DISPLAY AN EVENT IN THE MUSIC WINDOW// This is the main event display routine. It displays all types of events in// their correct formats in the music_wndw. If the event is not within the// music window, then left_edge is adjusted, and the whole window displayed in// order that the requested event can be seen.let disp_event(ev) be$(      static $( data = void; channel = void $)      // Move the whole window if the requested event is not within it.      unless left_edge <= event_time!ev <= left_edge+scrwidth      $(            left_edge := event_time!ev - scrwidth/2            if left_edge<0 then left_edge := 0            fade_out()            disp_music()            fade_in()      $)      // Extract the music data and the channel (only applies to notes and      // noise)      data := event!ev      channel := (data >> 8) rem 3      stream(music_wndw)      // Deal with the different types of events.      switchon data>>8 into      $(            // Normal notes (C,C#,D...)            // Notes are denoted by their name, with their octave relative to            // the middle-C octave displayed on the line below. No octave is            // displayed if the note is in the middle C octave.            case 0: case 1: case 2:            // move to the correct position in the window            locate(ev_column(event_time!ev), ev_row(channel)+3)            test (data & #x0F) = 0                  // no-sound, for white noise, numbered 0                  printf( "ns*x0A*b*b  " )            else                  // Normal notes, numbered 1 to 12                  // The octave is not displayed if it is zero. (excess 3)                  test (data & #xF0) = #x30                        printf( "%2s*x0A*b*b  ",                        note_name!(data & #x0F) )                  else                        printf( "%2s*x0A*b*b%2d",                              note_name!(data & #x0F),                              ((data & #xF0) >> 4)-3 )            endcase            // White noise.            // These are displayed below the main notes, and are denoted by            // the channel with which they will mix (A,B or C), and their            // period on the line below.            case 3: case 4: case 5:            locate(ev_column(event_time!ev), 14)            printf( "%c*x0A*b%2d", 'A'+(data>>8)-3, data & #xFF )            endcase            // Envelopes.            // Displayed as two letters, the left-hand letter is the new            // volume envelope letter, the right hand letter is the new            // tone envelope letter. If there is to be no change from the            // previous envelope a dash is displayed instead of a letter.            // Permanant envelope changes are shown in upper case, one-note            // envelopes are displayed in lower case.            // Permanant changes            case 6: case 7: case 8:            locate(ev_column(event_time!ev), ev_row(channel)+2)            putchar( (data & #xF0)=0 -> '-', 'A'-1 + ((data & #xF0) >> 4) )            putchar( (data & #x0F)=0 -> '-', 'A'-1 + (data & #x0F) )            endcase            // One-note envelopes            case 9: case 10: case 11:            locate(ev_column(event_time!ev), ev_row(channel)+2)            putchar( (data & #xF0)=0 -> '-', 'a'-1 + ((data & #xF0) >> 4) )            putchar( (data & #x0F)=0 -> '-', 'a'-1 + (data & #x0F) )            endcase            // Changes in beat length.            // These are percentages, and are displayed just below channel A            // as ^BL*nnn%, where nnn is the percental change in beat length.            // The upward array helps to clarify the position of the change.            case 12:            locate(ev_column(event_time!ev), 5)            printf( "*x18^BL**%d%%*x18", data & #xFF )            endcase            // Time bars.            // This is displayed just below channel C, as TB nn,ll where nn            // is the number of times the bar will be repeated before it            // is skipped, and ll is the number of bars to skip.            case 13: case 14: case 15: case 16:            case 17: case 18: case 19: case 20:            locate(ev_column(event_time!ev), 13)            printf("*x18^TB %d,%d*x18", data & #x0F, (data>>8) - 12)            endcase            // Go to another bar in music            // These events are displayed just below cannel B, as ^GO nnnn            // where nnnn is the bar number to go to.            default:            if data<0            $(                  locate(ev_column(event_time!ev), 9)                  printf("*x18^GO %d*x18", abs data)            $)      $)$)//    DISPLAY THE MUSIC WINDOW// This routine refreshes the entire contents of the music window, using the// routine disp_event().and disp_music() be$(      static      $(            ev = void               // Event on screen      $)      // Switch to the music window and clear it      stream(music_wndw)      cls()      // Find first event in the window      ev := event_after(left_edge)      // Display bar numbers at intervals of bar_length along the top of the      // music.      for i=0 to scrwidth      $(            if (left_edge+i) rem bar_length = 0            $(                  locate(i*3+1,1)                  printf("%d",(i+left_edge)/bar_length+1)            $)      $)      // Display the events in the window.      while event_time!ev <= left_edge+scrwidth & ev < free_space      $(            disp_event(ev)            ev := ev+1      $)      // Display block limits if they are on the screen. The block limits are      // displayed as square brackets alongside the event to which they apply.      // There must be a different number of brackets depending on the type of      // event.      if left_edge <= bl_start <= left_edge+scrwidth            switchon bl_channel into            $(                  // Normal notes                  case 0: case 1: case 2:                  locate(ev_column(bl_start)-1, ev_row(bl_channel)+2)                  puts("[*x0A*b[*x0A*b[")                  endcase                  // Noise                  case 3:                  locate(ev_column(bl_start)-1, 14 )                  puts("[*x0A*B[")                  endcase                  // Controls                  case 4:                  locate(ev_column(bl_start)-1, 5)                  puts("[*b*x0A*x0A*x0A*x0A[*b*x0A*x0A*x0A*x0A[")                  endcase            $)      // NB The right hand block marker cannot be displayed on the last column,      // hence the less-than left_edge plus scrwidth.      if left_edge <= bl_end < left_edge+scrwidth            switchon bl_channel into            $(                  // Normal notes                  case 0: case 1: case 2:                  locate(ev_column(bl_end)+2, ev_row(bl_channel)+2)                  puts("]*x0A*b]*x0A*b]")                  endcase                  // Noise                  case 3:                  locate( ev_column(bl_end)+2, 14 )                  puts("]*x0A*B]")                  endcase                  // Controls                  case 4:                  locate(ev_column(bl_end)+2, 5)                  puts("]*b*x0A*x0A*x0A*x0A]*b*x0A*x0A*x0A*x0A]")                  endcase            $)$)//    WIPE AN EVENT FROM THE SCREEN// This routine is used immediately before the event is deleted. It is similar// to disp_event(), but prints blank spaces over the event, rather than the// event data. It also has no effect when the event is outside the music window// Returns the same event number as it was passed.let wipe_event(ev) = valof$(      static $( channel = void $)      // No effect outside the music, or outside the music window      unless 0 <= ev <= music_size-1 &                              left_edge <= event_time!ev <= left_edge+scrwidth            resultis ev      stream(music_wndw)      // Work out which channel the event is on (does not apply to some events)      channel := (event!ev >> 8) rem 3      switchon event!ev>>8 into      $(            // Normal notes            case 0: case 1: case 2:            locate(ev_column(event_time!ev), ev_row(channel)+3)            puts("  *x0A*b*b  ")            endcase            // White noise            case 3: case 4: case 5:            locate(ev_column(event_time!ev), 14)            puts( " *x0A*b  " )            endcase            // Envelopes            case 6: case 7: case 8:            case 9: case 10: case 11:            locate(ev_column(event_time!ev), ev_row(channel)+2)            puts("  ")            endcase            // Beat length changes            case 12:            locate(ev_column(event_time!ev),5)            puts("       ")            endcase            // Time bars            case 13:            locate(ev_column(event_time!ev),13)            puts("        ")            endcase            // Go to another bar in music            default:            if event!ev<0            $(                  locate(ev_column(event_time!ev), 9)                  puts("         ")            $)      $)      resultis ev$)//    DISPLAY THE STATUS WINDOW// The status window contains the beat length, the limits of the block, and// the bar length of the music. The window is not cleared, because the printf()// routine ensures that the old contents are overwritten exactly. This avoids// flicker.let disp_status() be$(      stream(status_wndw)      // Display the speed of the music      printf("*x1EBeat length:%4d",beat_length)      // Display the extent of the music block      locate(22,1); puts("Start:"); disp_beat(bl_start)      locate(37,1); puts("End:"); disp_beat(bl_end)      locate(50,1)      printf(" Channel:%c", bl_channel<3 -> 'A'+bl_channel, 'N'+bl_channel-3)      // Display the bar length      locate(64,1)      printf("Beats per bar:%2d",bar_length)$)//    SET UP THE COMPLETE FRONT PANEL SCREEN// This routine sets up the whole screen from scratch.let setup_screen() be$(      // Screen mode 2 (80 columns, 25 lines)      fade_out()      mode(2)      // Write a vertical band, to the left of the music window, labelling the      // channel letters A,B,C and N. The string is packed with control codes,      // but this is the most efficient way of displaying such a vertical list      // of characters.      locate(1,3)      puts("*x18t*x0A*b *x0A*b *bA*            **x0A*b *x0A*b *x0A*b *x0A*b *bB*            **x0A*b *x0A*b *x0A*b *x0A*b *bC*            **x0A*b *x0A*b *x0A*b *bN*x0A*b *x18")      // Define the music window, and display the music data within it.      stream(music_wndw)      window(3,80,3,17)      disp_music()      // Define the status window and short prompt window      stream(status_wndw)      window(1,80,1,1)      disp_status()      stream(prompt_wndw)      window(1,80,2,2)      cls()      // Define the command window, with split sub-windows      stream(command_wndw)      window(1,80,19,25)      stream(lh_cmnd_wndw)      window(1,49,19,25)      stream(rh_cmnd_wndw)      window(50,80,19,25)      cls()      // Fade in the screen      fade_in()$)/////////////////////////////// EDITING ROUTINES ///////////////////////////////// The following routines are executed as a direct result of keypresses and// commands by the user. They allow editing and playback of the music.//                               PROGRAM STARTlet start() be$(      // Allocate storage space for the music, envelopes and note name arrays.      let v1 = vec music_size       // } Space for event_time!      and v2 = vec music_size       // } and event!      and v3 = vec nr_notes         // Space for note name array      and v4 = vec nr_envelopes*2*16// Space for the envelope data      // Set up the global arrays with their initial values.      event_time, event := v1, v2      note_name := v3      envelopes := v4      // Clear the envelope array      for i=0 to nr_envelopes*2*16-1            envelopes!i := 0      // Volume envelope A is initially set up with a simple envelope.      read_data(envelopes,maxint, 2, 0,15,50, 15,-1,10, maxint)      // Set up the note-name array      read_data(note_name,0,            "ns","C","C#","D","D#","E","F","F#","G","G#","A","A#","B",0)      // Set up the screen windows, and display the music status.      setup_screen()      //    MAIN EDITING LOOP      $(            // Ensure that the cursor is in the music window, move the window            // if it is not.            unless left_edge <= cur_time <= left_edge+scrwidth            $(                  // Put the cursor half way across the screen                  left_edge := cur_time - scrwidth/2                  // (but not if that puts left_edge outside the music)                  if left_edge<0 then left_edge := 0                  // Display the music in its new position                  fade_out()                  disp_music()                  fade_in()            $)            // Display a cursor on the current note. The cursor inverts the            // character on which it is located.            stream(music_wndw)            // The noise has a special location on the screen.            test cur_channel<3                  locate( ev_column(cur_time), ev_row(cur_channel)+3 )            else                  locate( ev_column(cur_time), 14 )            // Operating system routine to display a cursor            inline #xCD,#x8A,#xBB   // call txt place cursor            // Wait for a key from the keyboard, and convert it to upper case.            key := upper(getchar())            // Remove the cursor again            inline #xCD,#x8D,#xBB   // call txt remove cursor            // Decide what to do            switchon key into            $(                  //    CURSOR MOVEMENT                  // Arrow keys, these move the cursor by one position.                  // Left, right:                  case 242: case 243:                  cur_time := limit(                        cur_time + (key=242)-(key=243), 0, maxint-1 )                  endcase                  // Up,down:                  case 240: case 241:                  cur_channel := limit(                        cur_channel + (key=240)-(key=241), 0, 3)                  endcase                  // TAB key, moves the cursor to the start of the next bar.                  case 9:                  cur_time := ((cur_time+bar_length)/bar_length)*bar_length                  endcase                  // CTRL with cursor keys- moves the cursor by 20 beats.                  case #xFA: case #xFB:                  cur_time := limit(                        cur_time + 20 * ((key=#xFA)-(key=#xFB)),                        0, maxint-1)                  endcase                  //    NOTE & NOISE ALTERATION                  // SHIFT+arrow keys                  case 244: case 245: case 246: case 247:                  test cur_channel<3                        alter_note()                  else                        alter_noise()                  endcase                  //    NOTE DELETION                  case 16:          // CLR key                  // The type of a normal note is decided by its position, but                  // a noise might have one of three types for one position.                  test cur_channel<3                        delete_event( wipe_event(                              find_event( cur_time, cur_channel ) ) )                  else                        for i=3 to 5                              delete_event( wipe_event(find_event(cur_time,i)))                  endcase                  //    ENVELOPE ALTERATION                  case 'V':                  // There are no envelopes on the noise channel.                  if cur_channel<3                        alter_env()                  endcase                  //    SET BLOCK                  case '[':         // set start                  // Move start to cursor                  bl_start := cur_time                  // Move channel to cursor                  bl_channel := cur_channel                  // Move end to cursor if is now before the start                  if bl_start>bl_end                        bl_end := bl_start                  // Display the results                  disp_music()                  disp_status()                  endcase                  case ']':         // set end                  bl_end := cur_time                  bl_channel := cur_channel                  if bl_end<bl_start                        bl_start := bl_end                  disp_music()                  disp_status()                  endcase                  // Move the block channel without changing the limits.                  case 'C':         // set channel                  bl_channel := cur_channel                  disp_music()                  disp_status()                  endcase                  // Move the block channel to the controls                  // This allows copying etc. of time bars, speed changes etc                  case 'A':                  bl_channel := 4                  disp_music()                  disp_status()                  endcase                  // Copy the contents of the block to the cursor position                  case 'C'-64:      // copy block (key is [CTRL-C] )                  copy_block()                  endcase                  // Delete the contents of the block                  case 'D'-64:      // delete block (key is [CTRL-D] )                  delete_block()                  endcase                  // Transpose the block                  case 'T'-64:      // key is [CTRL-T]                  transpose()                  endcase                  //    SET BAR LENGTH                  case 'L':                  // Prompt for bar length, and wait for a valid response.                  stream(prompt_wndw)                  $(                        puts("*pEnter new bar length (2 to 24):")                        bar_length := getint()                  $)                  repeatuntil 2 <= bar_length <= 24                  // Display the changes                  fade_out()                  cls()                  disp_music()                  disp_status()                  fade_in()                  endcase                  //    MOVE TO ANY BAR                  case 'M':                  // Prompt for a bar number, and wait for a valid response.                  stream(prompt_wndw)                  $(                        puts("*pEnter bar to move to:")                        cur_time := bar_length * (getint()-1)                  $)                  repeatuntil 0 <= cur_time <= maxint-1                  cls()                  // The movement will take place automatically at the beginning                  // of the main editing loop.                  endcase                  //    EDIT ENVELOPES                  case 'E':                  edit_env()                  endcase                  //    CHANGE MUSIC SPEED                  case 'S':                  // Prompt for a new speed, and repeat until the response is                  // valid.                  stream(prompt_wndw)                  $(                        printf("*pEnter new beat length in 300th of*                              * second (%d to %d):",                              min_beat_len, max_beat_len)                        beat_length := getint()                  $)                  repeatuntil 1 <= beat_length <= 30000                  // Display the changes.                  fade_out()                  cls()                  disp_status()                  fade_in()                  endcase                  //    EDIT A BEAT LENGTH CHANGE                  // These control events alter the speed of the music.                  case 'S'-64:                  insert_blc()                  endcase                  //    EDIT A "GO TO BAR"                  // These alter the sequence of the music, unconditionally                  // jumping to a bar in the music.                  case 'G':                  insert_gtb()                  endcase                  //    EDIT A TIME BAR                  // These also alter the sequence, allowing a bar to be                  // played only a set number of times, after which it is                  // skipped.                  case 'T':                  insert_tb()                  endcase                  //    FILE CONTROL                  // A sub-section allowing the music to be put onto backing                  // storage (disc or cassette tape).                  case 'F':                  file_control()                  endcase                  //    TOGGLE NOTATION BETWEEN SHARPS AND FLATS                  case 'Z':                  test sharps                  $(                        read_data(note_name,0,"ns","C","Db","D","Eb","E","F",                              "Gb","G","Ab","A","Bb","B",0)                        sharps := false                  $)                  else                  $(                        read_data(note_name,0,"ns","C","C#","D","D#","E","F",                              "F#","G","G#","A","A#","B",0)                        sharps := true                  $)                  // Display the changes                  fade_out()                  disp_music()                  fade_in()                  endcase                  //    PLAY THE WHOLE MUSIC                  case 'P':                  // Check that there is some music to play                  unless free_space=0                        // Play all music from time 0 to time of last event                        play_music( 0, event_time!(free_space-1) )                  endcase                  //    PLAY THE MUSIC IN THE BLOCK                  case 'B':                  play_music(bl_start, bl_end)                  endcase                  //    DISPLAY THE MEMORY STATUS IN THE PROMPT WINDOW                  case 'F'-64:      // key is [CTRL-F]                  stream(prompt_wndw)                  printf("*p%d events used out of %d, leaving %d events free.",                        free_space, music_size, music_size-free_space )                  endcase                  //    FINISH EDITING WITH CLAVICOM                  case 'X'-64:      // key is [CTRL-X]                  stream(prompt_wndw)                  puts("*pAre you sure you want to exit CLAVICOM? (type Y or N)")                        key := upper(getchar())                  repeatuntil key='Y' | key='N'                  cls()                  // If 'Y' was typed the main editing loop is left, causing the                  // termination of the program.                  if key='Y'                        break            $)      $)      repeat$)//////////////////////// END OF CLAVICOM SOURCE FILE 1 ////////////////////////
+//
+//          CLAVICOM SOURCE CODE FILE 1
+//
+//    Filename:               clavi1.sub
+//    Programmer:             Richard Brooksby
+//    Source language:        BCPL
+//    Last updated:           07DEC87
+//
+
+// Copyright (C) 1987, 1999 Richard Brooksby.  All rights reserved.  You
+// may make and distribute verbatim copies of this document provided that
+// you retain as they appear all copyright and licence notices.  You may
+// NOT charge a fee for this document or for distributing this document. 
+// You may NOT make or distribute derivative works (modified versions) of
+// this document without the express written permission of the copyright
+// holder.
+//
+// This copyright notice was added on 1999-09-20.
+
+
+////////////////////////// LOW LEVEL DRIVING ROUTINES //////////////////////////
+
+// These routines access the AMSTRAD firmware. They allow BCPL to access
+// standard routines built into the machines operating system (refered to as
+// the firmware). In effect they are adding machine-specific features to the
+// language.
+
+
+//    SOUND ROUTINES
+
+//    ADD A SOUND TO THE SOUND QUEUES
+// The parameter is the address of an array, which contains the following
+// information:
+// status, tone period, duration, start volume, volume env, tone env, noise.
+// The firmware routine demands data in the central 32K of memory, so the
+// hardware stack is used.
+
+let sound(array) be
+$(
+      let a1,a2,a3,a4,a5 = 0, 0, 0, 0, 0   // an array on the hardware stack
+      let sbase = @a5
+      sbase%0 := array!0      // Copy the supplied data onto the stack,
+      sbase%1 := array!4      // in a form suitable for the firmware routine:
+      sbase%2 := array!5      // SOUND_QUEUE
+      sbase%3 := array%2
+      sbase%4 := array%3
+      sbase%5 := array!6
+      sbase%6 := array!3
+      sbase%7 := array%4
+      sbase%8 := array%5
+      inline 33,110,0         // ld hl,110
+      inline 221,229,221,229  // push ix, push ix
+      inline 209              // pop de
+      inline 25               // add hl,de
+      inline 205,#xAA,#xBC    // call sound queue
+      inline 221,225          // pop ix
+$)
+
+//    SET A TONE ENVELOPE
+// This routine uses the hardware stack in a similar way to sound(). The number
+// supplied is the envelope number being set, and the other parameter points to
+// an array containing: 1,    the number of envelope sections
+//                            2,3,4 the first section
+//                            5,6,7 the second section, etc
+
+let set_tone_env(number,envelope) be
+$(
+      let a0,a1,a2,a3,a4,a5,a6,a7 = 0,0,0,0,0,0,0,0  // 16 bytes
+      let entbase = @a7
+
+      for i=0 to 15
+            entbase%i := envelope!i
+
+      inline 33,102,0               // ld hl,102
+      inline 221,229,221,229        // push ix:push ix
+      inline 209                    // pop de
+      inline 25                     // add hl,de
+      inline 221,126,124            // ld a,(ix+124)
+      inline 205,#xbf,#xbc          // call sound tone envelope
+      inline 221,225                // pop ix
+$)
+
+//    SET A VOLUME ENVELOPE
+// see set_tone_env()
+
+let set_vol_env(number,envelope) be
+$(
+      let a0,a1,a2,a3,a4,a5,a6,a7 = 0,0,0,0,0,0,0,0  // 16 bytes
+      let entbase = @a7
+
+      for i=0 to 15
+            entbase%i := envelope!i
+
+      inline 33,102,0               // ld hl,102
+      inline 221,229,221,229        // push ix:push ix
+      inline 209                    // pop de
+      inline 25                     // add hl,de
+      inline 221,126,124            // ld a,(ix+124)
+      inline 205,#xbc,#xbc          // call sound ampl envelope
+      inline 221,225                // pop ix
+$)
+
+
+//    TEXT ROUTINES
+
+//    CLEAR THE CURRENT TEXT WINDOW
+
+let cls() be
+$(
+      inline 205,#x6C,#xBB          // call txt clear window
+$)
+
+//    SET THE SCREEN MODE.
+// Mode 2 has 80 columns and 25 lines. This command clears all windows.
+
+let mode(n) be
+$(
+      inline 221,126,126            // ld a,(ix+126)
+      inline 205,#x0E,#xBC          // call scr set mode
+$)
+
+//    SELECT A STREAM FOR TEXT OUTPUT
+// Streams 0 to 7 refer to windows on the text screen.
+
+let stream(number) be
+$(
+      inline 221,126,126            // ld a,(ix+126)
+      inline 205,#xB4,#xBB          // call txt str select
+$)
+
+//    DEFINE A TEXT WINDOW ON THE SCREEN
+// The window is set on the current text stream. The limits given are the
+// inclusive edges of the window.
+
+let window(left,right,top,bottom) be
+$(
+      left,right,top,bottom := left-1,right-1,top-1,bottom-1
+      inline #xDD,#x6E,126          // ld l,(ix+126)
+      inline #xDD,#x5E,124          // ld e,(ix+124)
+      inline #xDD,#x66,122          // ld h,(ix+122)
+      inline #xDD,#x56,120          // ld d,(ix+120)
+      inline #xCD,#x66,#xBB         // call txt win enable
+$)
+
+//    TEST WHETHER A KEY HAS BEEN PRESSED
+// Return a true flag if a key has been pressed since the last call of this
+// routine.
+
+let key_pressed() = valof
+$(
+      let flag=0
+      inline #xCD,#x09,#xBB         // call km read char
+      inline #x30,4                 // jr nc,$+4
+      inline #xDD,#x36,120,1        // ld (ix+120),1
+      resultis flag
+$)
+
+
+//    FADE SCREEN
+// The routines are used to give (relatively) gradual changes in screen
+// intensity. This is done by using control code #x1C, which changes the colour
+// of an ink. On the screen the effect is similar to a fade-out on television.
+// By fading the screen unsightly update effects can be avoided.
+
+let fade_out() be
+      for i=25 to 1 by -1
+            printf("*x1C1%c%c",i,i)
+
+let fade_in() be
+      for i=1 to 25
+            printf("*x1C1%c%c",i,i)
+
+
+
+////////////////////////// DATA MANIPULATION ROUTINES //////////////////////////
+
+// These routines are concerned with the manipulation of data, but are not
+// specifically to do with music, or indeed this program.
+
+
+//    READ DATA INTO A VECTOR
+// This routine is used to initialise an array with a list of values at runtime.
+// The data supplied is as a list of parameters, and the end of the list is
+// marked with a value equal to the end_marker parameter.
+
+let read_data(vector,end_marker,data...) = valof
+$(
+      static $( datum_ptr = 0 $)
+
+      // datum ptr points to the first datum
+      datum_ptr := @data...
+
+      until !datum_ptr = end_marker
+      $(
+            !vector := !datum_ptr
+            vector, datum_ptr := vector+1, datum_ptr+1
+      $)
+
+       resultis datum_ptr-@data...
+$)
+
+
+//    LIMIT A NUMBER BETWEEN TWO VALUES
+// This routine is widely used to stop user input from exceeding the legal
+// limits for that value. e.g. legal notes run from 0 to 12.
+
+let limit(number,lower,upper) = valof
+$(
+      if number>upper
+            resultis upper
+      if number<lower
+            resultis lower
+      resultis number
+$)
+
+
+//    CONVERT A LETTER TO UPPER CASE
+
+let upper(ch) = 'a' <= ch <= 'z' -> ch-32, ch
+
+
+//    INPUT A NUMBER FROM THE KEYBOARD
+// The digits are read into a byte array, and the final value calculated from
+// the contents of the array when the ENTER key is pressed.
+
+let getint() = valof
+$(
+      let digit=vec 5 and next=0 and value=0 and sign=1
+
+      $(
+            // Get key from keyboard
+            key := getchar()
+
+            // Check for legal digits
+            if '0' <= key <= '9' | key='-'
+            $(
+                  // Echo the key to the screen
+                  putchar(key)
+                  // Put the digit value into the array
+                  digit!next := key
+                  next := next+1
+            $)
+
+            // Check for the DELETE key
+            if key=127 & next>0
+            $(
+                  // Step back in the digit array, and wipe the last digit from
+                  // the screen.
+                  next := next-1
+                  puts("*b*x10")
+            $)
+      $)
+      repeatuntil next>5 | key=13
+
+      // Calculate the value of the typed number
+      for i=0 to next-1
+            test digit!i = '-'
+                  sign := -1
+            else
+                  value := value*10 + digit!i - '0'
+
+      resultis value*sign
+$)
+
+
+
+///////////////////////// MUSIC MANIPULATION ROUTINES //////////////////////////
+
+// These are data manipulation routines which are specifically to do with the
+// music arrays (event_time! and event!).
+
+
+//    TRANSPOSE A NOTE BY A GIVEN NUMBER OF SEMITONES
+// This function alters the note number and octave of the note. If a note goes
+// below the lowest octave, or above the highest, then the note is shifted BY
+// OCTAVE back into legal range.
+
+let trans_note(note_data,offset) = valof
+$(
+      static $( note = void; octave = void $)
+
+      // non-sounds are not effected
+      unless note_data & #x0F
+            resultis note_data
+
+      // Convert the note to a sliding scale ranging from C, octave -3
+      note := (note_data & #x0F)-1 + 12*((note_data & #xF0) >> 4)
+
+      // Add the offset
+      note := note+offset
+
+      // Convert the note back again
+      octave := note/12
+      note := (note rem 12) +1
+
+      // Return the note data in compressed form
+      resultis (octave<<4) | note
+$)
+
+
+//    SEARCH FOR THE FIRST EVENT AFTER OR ON A SPECIFIED TIME
+
+// Returns the event number, ot free_space if there are none.
+
+let event_after(time) = valof
+$(
+      for i=0 to free_space-1
+            if event_time!i >= time then resultis i
+
+      resultis free_space
+$)
+
+
+//    FIND AN EVENT TYPE AT A CERTAIN TIME
+// The type supplied is the top byte of the event! array data to be found. If
+// the type supplied is -1, then any negative event (ie a go to bar) will match.
+// The routine returns -1 if no matching event is found at the specified time,
+// and then stores the position where such an event could be inserted in the
+// global variable placing.
+
+let find_event(time,type) = valof
+$(
+      static $( ev = void $)
+
+      // Find the first event at the specified time
+      ev := event_after(time)
+
+      // Examine all events at that time for a match.
+      while event_time!ev = time & ev < free_space
+      $(
+            // Match found?
+            if type = (event!ev>>8) | (type=-1 & event!ev<0)
+                  resultis ev
+            ev := ev+1
+      $)
+
+      // No match found
+      placing := ev
+      resultis -1
+$)
+
+
+//    INSERT A NEW EVENT
+// Returns a flag which is true if there was room in the music array for the
+// new event.
+// This routine updates block_ev so the block can be traced whilst inserting.
+
+let insert_event(ev,time,data) = valof
+$(
+      // Check that there is room in the music array
+      if free_space=music_size
+            resultis false
+
+      // Shift all the music data up by one position
+      for i=free_space to ev+1 by -1
+      $(
+            event_time!i := event_time!(i-1)
+            event!i := event!(i-1)
+      $)
+
+      // Update block_ev is it was shifted with the other data.
+      if block_ev>=ev
+            block_ev := block_ev+1
+
+      // Insert the new data
+      free_space := free_space+1
+      event_time!ev := time
+      event!ev := data
+
+      resultis true
+$)
+
+
+//    DELETE AN EVENT
+// This routine updates block_ev so the block can be traced whilst deleting.
+
+let delete_event(ev) be
+$(
+      // Check for a legal deletion, ie within the music
+      unless 0<=ev<=free_space-1
+            return
+
+      // Shift all the following data down by one position.
+
+      free_space := free_space-1
+
+      for i=ev to free_space-1
+      $(
+            event_time!i := event_time!(i+1)
+            event!i := event!(i+1)
+      $)
+
+      // Update block_ev if it was shifted too.
+      if block_ev>ev
+            block_ev := block_ev-1
+$)
+
+
+//    IS AN EVENT ON A CERTAIN CHANNEL?
+// returns a true flag if so.
+// Channels are numbered: A=0, B=1, C=2, N=3, anything else=4
+
+let is_on_chan(ev,channel) = valof
+$(
+      // Extract that part of an event which sets the channel
+      ev := event!ev >> 8
+
+      // Does a channel apply to the event?
+      if ev>=12
+            resultis channel=4
+
+      // Is it a noise?
+      if 3<=ev<=5
+            resultis channel=3
+
+      // Check if it is on the channel
+      resultis (ev rem 3) = channel
+$)
+
+
+//    DELETE EVENTS ON A SPECIFIED CHANNEL BETWEEN TWO LIMITS
+// NB the search is done backwards, since the limits change when and event
+// is deleted. If channel=4 then control events are deleted
+
+let del_events(start,end,channel) be
+      for i=end to start by -1
+            if is_on_chan(i,channel)
+                  delete_event(i)
+
+
+//    COUNT THE EVENTS ON A CHANNEL BETWEEN TWO LIMITS
+// The channel numbers are those given for is_on_chan()
+
+let count_events(start,end,channel) = valof
+$(
+      static $( count = void $)
+
+      // Start with no events
+      count := 0
+
+      // Check between the limits for events
+      for i=start to end
+            if is_on_chan(i,channel)
+                  count := count+1
+      resultis count
+$)
+
+
+//    CALCULATE THE ADDRESS OF AN ENVELOPES DATA
+// All the envelope data is stored in one large array. This routine calculates
+// the address of the data of the envelope letter given. Type is zero for
+// volume envelopes, and one for tone envelopes.
+
+let env_address(type,env) = envelopes + (env-'A')*16 + (type -> 0, 16*15)
+
+
+//    SET UP ALL THE ENVELOPES FROM THE TABLE
+// This routine sends all the envelope data in the envelopes! array to the
+// firmware.
+
+let set_all_env() be
+$(
+      // Send all the new envelope data to the firmware
+
+      for type=0 to 1
+      $(
+            for env='A' to 'O'
+            $(
+                  test type
+                        set_vol_env( env-'A'+1, env_address(type,env))
+                  else
+                        set_tone_env( env-'A'+1, env_address(type,env))
+            $)
+      $)
+$)
+
+
+//    FIND THE FIRST EVENT IN THE BLOCK
+// This routine puts the first event number into block_ev.
+// Leaves -1 in block_ev if there are none.
+// see also: insert_event, delete_event
+
+let find_first() be
+$(
+      // Find the first event on any channel
+      block_ev := event_after(bl_start)
+
+      // If block_ev is not on the right channel, search for the first event on
+      // the block channel, and within both the music and the block.
+      unless is_on_chan(block_ev,bl_channel)
+            find_next()
+$)
+
+
+//    FIND THE NEXT EVENT IN THE BLOCK
+// leaves -1 in block_ev if there are no more.
+
+and find_next() be
+$(
+      if block_ev=-1
+            return
+
+      // Start searching for an event which is in the block
+      $(
+            block_ev := block_ev+1
+            // Stop searchin if the event is outside the music or the block.
+            if event_time!block_ev > bl_end | block_ev>=free_space
+            $(
+                  block_ev := -1
+                  return
+            $)
+      $)
+      repeatuntil is_on_chan(block_ev,bl_channel)
+$)
+
+
+//////////////////////////// MUSIC DISPLAY ROUTINES ////////////////////////////
+
+// These routines deal with the display of the music on the screen.
+
+
+//    DISPLAY AN EVENT TIME AS xxxbyyy
+// where xxx is a bar number, and yyy is the beat number within the bar.
+// The printed time will not exceed 9 characters in length.
+
+let disp_beat(time) be
+      printf("%5db%d ", time/bar_length+1, time rem bar_length +1 )
+
+
+//    CALCULATE POSITION IN MUSIC_WNDW OF AN EVENT
+
+// These functions return the column and row positions of an event.
+
+let ev_column(time) = 3*(time-left_edge)+2
+let ev_row(channel) = 4*(channel rem 3)
+
+
+//    DISPLAY AN EVENT IN THE MUSIC WINDOW
+// This is the main event display routine. It displays all types of events in
+// their correct formats in the music_wndw. If the event is not within the
+// music window, then left_edge is adjusted, and the whole window displayed in
+// order that the requested event can be seen.
+
+let disp_event(ev) be
+$(
+      static $( data = void; channel = void $)
+
+      // Move the whole window if the requested event is not within it.
+      unless left_edge <= event_time!ev <= left_edge+scrwidth
+      $(
+            left_edge := event_time!ev - scrwidth/2
+            if left_edge<0 then left_edge := 0
+            fade_out()
+            disp_music()
+            fade_in()
+      $)
+
+      // Extract the music data and the channel (only applies to notes and
+      // noise)
+      data := event!ev
+      channel := (data >> 8) rem 3
+
+      stream(music_wndw)
+
+      // Deal with the different types of events.
+      switchon data>>8 into
+      $(
+            // Normal notes (C,C#,D...)
+            // Notes are denoted by their name, with their octave relative to
+            // the middle-C octave displayed on the line below. No octave is
+            // displayed if the note is in the middle C octave.
+
+            case 0: case 1: case 2:
+            // move to the correct position in the window
+            locate(ev_column(event_time!ev), ev_row(channel)+3)
+            test (data & #x0F) = 0
+                  // no-sound, for white noise, numbered 0
+                  printf( "ns*x0A*b*b  " )
+            else
+                  // Normal notes, numbered 1 to 12
+                  // The octave is not displayed if it is zero. (excess 3)
+                  test (data & #xF0) = #x30
+                        printf( "%2s*x0A*b*b  ",
+                        note_name!(data & #x0F) )
+                  else
+                        printf( "%2s*x0A*b*b%2d",
+                              note_name!(data & #x0F),
+                              ((data & #xF0) >> 4)-3 )
+            endcase
+
+            // White noise.
+            // These are displayed below the main notes, and are denoted by
+            // the channel with which they will mix (A,B or C), and their
+            // period on the line below.
+
+            case 3: case 4: case 5:
+            locate(ev_column(event_time!ev), 14)
+            printf( "%c*x0A*b%2d", 'A'+(data>>8)-3, data & #xFF )
+            endcase
+
+            // Envelopes.
+            // Displayed as two letters, the left-hand letter is the new
+            // volume envelope letter, the right hand letter is the new
+            // tone envelope letter. If there is to be no change from the
+            // previous envelope a dash is displayed instead of a letter.
+            // Permanant envelope changes are shown in upper case, one-note
+            // envelopes are displayed in lower case.
+
+            // Permanant changes
+            case 6: case 7: case 8:
+            locate(ev_column(event_time!ev), ev_row(channel)+2)
+            putchar( (data & #xF0)=0 -> '-', 'A'-1 + ((data & #xF0) >> 4) )
+            putchar( (data & #x0F)=0 -> '-', 'A'-1 + (data & #x0F) )
+            endcase
+
+            // One-note envelopes
+            case 9: case 10: case 11:
+            locate(ev_column(event_time!ev), ev_row(channel)+2)
+            putchar( (data & #xF0)=0 -> '-', 'a'-1 + ((data & #xF0) >> 4) )
+            putchar( (data & #x0F)=0 -> '-', 'a'-1 + (data & #x0F) )
+            endcase
+
+            // Changes in beat length.
+            // These are percentages, and are displayed just below channel A
+            // as ^BL*nnn%, where nnn is the percental change in beat length.
+            // The upward array helps to clarify the position of the change.
+
+            case 12:
+            locate(ev_column(event_time!ev), 5)
+            printf( "*x18^BL**%d%%*x18", data & #xFF )
+            endcase
+
+            // Time bars.
+            // This is displayed just below channel C, as TB nn,ll where nn
+            // is the number of times the bar will be repeated before it
+            // is skipped, and ll is the number of bars to skip.
+
+            case 13: case 14: case 15: case 16:
+            case 17: case 18: case 19: case 20:
+            locate(ev_column(event_time!ev), 13)
+            printf("*x18^TB %d,%d*x18", data & #x0F, (data>>8) - 12)
+            endcase
+
+            // Go to another bar in music
+            // These events are displayed just below cannel B, as ^GO nnnn
+            // where nnnn is the bar number to go to.
+
+            default:
+            if data<0
+            $(
+                  locate(ev_column(event_time!ev), 9)
+                  printf("*x18^GO %d*x18", abs data)
+            $)
+      $)
+$)
+
+
+//    DISPLAY THE MUSIC WINDOW
+// This routine refreshes the entire contents of the music window, using the
+// routine disp_event().
+
+and disp_music() be
+$(
+      static
+      $(
+            ev = void               // Event on screen
+      $)
+
+      // Switch to the music window and clear it
+      stream(music_wndw)
+      cls()
+
+      // Find first event in the window
+      ev := event_after(left_edge)
+
+      // Display bar numbers at intervals of bar_length along the top of the
+      // music.
+
+      for i=0 to scrwidth
+      $(
+            if (left_edge+i) rem bar_length = 0
+            $(
+                  locate(i*3+1,1)
+                  printf("%d",(i+left_edge)/bar_length+1)
+            $)
+      $)
+
+      // Display the events in the window.
+      while event_time!ev <= left_edge+scrwidth & ev < free_space
+      $(
+            disp_event(ev)
+            ev := ev+1
+      $)
+
+      // Display block limits if they are on the screen. The block limits are
+      // displayed as square brackets alongside the event to which they apply.
+      // There must be a different number of brackets depending on the type of
+      // event.
+
+      if left_edge <= bl_start <= left_edge+scrwidth
+            switchon bl_channel into
+            $(
+                  // Normal notes
+                  case 0: case 1: case 2:
+                  locate(ev_column(bl_start)-1, ev_row(bl_channel)+2)
+                  puts("[*x0A*b[*x0A*b[")
+                  endcase
+
+                  // Noise
+                  case 3:
+                  locate(ev_column(bl_start)-1, 14 )
+                  puts("[*x0A*B[")
+                  endcase
+
+                  // Controls
+                  case 4:
+                  locate(ev_column(bl_start)-1, 5)
+                  puts("[*b*x0A*x0A*x0A*x0A[*b*x0A*x0A*x0A*x0A[")
+                  endcase
+            $)
+
+      // NB The right hand block marker cannot be displayed on the last column,
+      // hence the less-than left_edge plus scrwidth.
+
+      if left_edge <= bl_end < left_edge+scrwidth
+            switchon bl_channel into
+            $(
+                  // Normal notes
+                  case 0: case 1: case 2:
+                  locate(ev_column(bl_end)+2, ev_row(bl_channel)+2)
+                  puts("]*x0A*b]*x0A*b]")
+                  endcase
+
+                  // Noise
+                  case 3:
+                  locate( ev_column(bl_end)+2, 14 )
+                  puts("]*x0A*B]")
+                  endcase
+
+                  // Controls
+                  case 4:
+                  locate(ev_column(bl_end)+2, 5)
+                  puts("]*b*x0A*x0A*x0A*x0A]*b*x0A*x0A*x0A*x0A]")
+                  endcase
+            $)
+$)
+
+
+//    WIPE AN EVENT FROM THE SCREEN
+// This routine is used immediately before the event is deleted. It is similar
+// to disp_event(), but prints blank spaces over the event, rather than the
+// event data. It also has no effect when the event is outside the music window
+// Returns the same event number as it was passed.
+
+let wipe_event(ev) = valof
+$(
+      static $( channel = void $)
+
+      // No effect outside the music, or outside the music window
+      unless 0 <= ev <= music_size-1 &
+                              left_edge <= event_time!ev <= left_edge+scrwidth
+            resultis ev
+
+      stream(music_wndw)
+
+      // Work out which channel the event is on (does not apply to some events)
+      channel := (event!ev >> 8) rem 3
+
+      switchon event!ev>>8 into
+      $(
+            // Normal notes
+            case 0: case 1: case 2:
+            locate(ev_column(event_time!ev), ev_row(channel)+3)
+            puts("  *x0A*b*b  ")
+            endcase
+
+            // White noise
+            case 3: case 4: case 5:
+            locate(ev_column(event_time!ev), 14)
+            puts( " *x0A*b  " )
+            endcase
+
+            // Envelopes
+            case 6: case 7: case 8:
+            case 9: case 10: case 11:
+            locate(ev_column(event_time!ev), ev_row(channel)+2)
+            puts("  ")
+            endcase
+
+            // Beat length changes
+            case 12:
+            locate(ev_column(event_time!ev),5)
+            puts("       ")
+            endcase
+
+            // Time bars
+            case 13:
+            locate(ev_column(event_time!ev),13)
+            puts("        ")
+            endcase
+
+            // Go to another bar in music
+            default:
+            if event!ev<0
+            $(
+                  locate(ev_column(event_time!ev), 9)
+                  puts("         ")
+            $)
+
+      $)
+      resultis ev
+$)
+
+
+//    DISPLAY THE STATUS WINDOW
+// The status window contains the beat length, the limits of the block, and
+// the bar length of the music. The window is not cleared, because the printf()
+// routine ensures that the old contents are overwritten exactly. This avoids
+// flicker.
+
+let disp_status() be
+$(
+      stream(status_wndw)
+
+      // Display the speed of the music
+      printf("*x1EBeat length:%4d",beat_length)
+
+      // Display the extent of the music block
+      locate(22,1); puts("Start:"); disp_beat(bl_start)
+      locate(37,1); puts("End:"); disp_beat(bl_end)
+      locate(50,1)
+      printf(" Channel:%c", bl_channel<3 -> 'A'+bl_channel, 'N'+bl_channel-3)
+
+      // Display the bar length
+      locate(64,1)
+      printf("Beats per bar:%2d",bar_length)
+$)
+
+
+//    SET UP THE COMPLETE FRONT PANEL SCREEN
+// This routine sets up the whole screen from scratch.
+
+let setup_screen() be
+$(
+      // Screen mode 2 (80 columns, 25 lines)
+      fade_out()
+      mode(2)
+
+      // Write a vertical band, to the left of the music window, labelling the
+      // channel letters A,B,C and N. The string is packed with control codes,
+      // but this is the most efficient way of displaying such a vertical list
+      // of characters.
+      locate(1,3)
+      puts("*x18t*x0A*b *x0A*b *bA*
+            **x0A*b *x0A*b *x0A*b *x0A*b *bB*
+            **x0A*b *x0A*b *x0A*b *x0A*b *bC*
+            **x0A*b *x0A*b *x0A*b *bN*x0A*b *x18")
+
+      // Define the music window, and display the music data within it.
+      stream(music_wndw)
+      window(3,80,3,17)
+      disp_music()
+
+      // Define the status window and short prompt window
+      stream(status_wndw)
+      window(1,80,1,1)
+      disp_status()
+      stream(prompt_wndw)
+      window(1,80,2,2)
+      cls()
+
+      // Define the command window, with split sub-windows
+      stream(command_wndw)
+      window(1,80,19,25)
+      stream(lh_cmnd_wndw)
+      window(1,49,19,25)
+      stream(rh_cmnd_wndw)
+      window(50,80,19,25)
+      cls()
+
+      // Fade in the screen
+      fade_in()
+$)
+
+
+/////////////////////////////// EDITING ROUTINES ///////////////////////////////
+
+// The following routines are executed as a direct result of keypresses and
+// commands by the user. They allow editing and playback of the music.
+
+
+//                               PROGRAM START
+
+let start() be
+$(
+      // Allocate storage space for the music, envelopes and note name arrays.
+      let v1 = vec music_size       // } Space for event_time!
+      and v2 = vec music_size       // } and event!
+      and v3 = vec nr_notes         // Space for note name array
+      and v4 = vec nr_envelopes*2*16// Space for the envelope data
+
+      // Set up the global arrays with their initial values.
+
+      event_time, event := v1, v2
+      note_name := v3
+      envelopes := v4
+
+      // Clear the envelope array
+      for i=0 to nr_envelopes*2*16-1
+            envelopes!i := 0
+
+      // Volume envelope A is initially set up with a simple envelope.
+      read_data(envelopes,maxint, 2, 0,15,50, 15,-1,10, maxint)
+
+      // Set up the note-name array
+      read_data(note_name,0,
+            "ns","C","C#","D","D#","E","F","F#","G","G#","A","A#","B",0)
+
+      // Set up the screen windows, and display the music status.
+      setup_screen()
+
+      //    MAIN EDITING LOOP
+
+      $(
+            // Ensure that the cursor is in the music window, move the window
+            // if it is not.
+            unless left_edge <= cur_time <= left_edge+scrwidth
+            $(
+                  // Put the cursor half way across the screen
+                  left_edge := cur_time - scrwidth/2
+                  // (but not if that puts left_edge outside the music)
+                  if left_edge<0 then left_edge := 0
+                  // Display the music in its new position
+                  fade_out()
+                  disp_music()
+                  fade_in()
+            $)
+
+            // Display a cursor on the current note. The cursor inverts the
+            // character on which it is located.
+            stream(music_wndw)
+            // The noise has a special location on the screen.
+            test cur_channel<3
+                  locate( ev_column(cur_time), ev_row(cur_channel)+3 )
+            else
+                  locate( ev_column(cur_time), 14 )
+
+            // Operating system routine to display a cursor
+            inline #xCD,#x8A,#xBB   // call txt place cursor
+
+            // Wait for a key from the keyboard, and convert it to upper case.
+            key := upper(getchar())
+
+            // Remove the cursor again
+            inline #xCD,#x8D,#xBB   // call txt remove cursor
+
+            // Decide what to do
+
+            switchon key into
+            $(
+                  //    CURSOR MOVEMENT
+
+                  // Arrow keys, these move the cursor by one position.
+                  // Left, right:
+                  case 242: case 243:
+                  cur_time := limit(
+                        cur_time + (key=242)-(key=243), 0, maxint-1 )
+                  endcase
+
+                  // Up,down:
+                  case 240: case 241:
+                  cur_channel := limit(
+                        cur_channel + (key=240)-(key=241), 0, 3)
+                  endcase
+
+                  // TAB key, moves the cursor to the start of the next bar.
+
+                  case 9:
+                  cur_time := ((cur_time+bar_length)/bar_length)*bar_length
+                  endcase
+
+                  // CTRL with cursor keys- moves the cursor by 20 beats.
+
+                  case #xFA: case #xFB:
+                  cur_time := limit(
+                        cur_time + 20 * ((key=#xFA)-(key=#xFB)),
+                        0, maxint-1)
+                  endcase
+
+                  //    NOTE & NOISE ALTERATION
+
+                  // SHIFT+arrow keys
+                  case 244: case 245: case 246: case 247:
+                  test cur_channel<3
+                        alter_note()
+                  else
+                        alter_noise()
+                  endcase
+
+                  //    NOTE DELETION
+
+                  case 16:          // CLR key
+                  // The type of a normal note is decided by its position, but
+                  // a noise might have one of three types for one position.
+                  test cur_channel<3
+                        delete_event( wipe_event(
+                              find_event( cur_time, cur_channel ) ) )
+                  else
+                        for i=3 to 5
+                              delete_event( wipe_event(find_event(cur_time,i)))
+                  endcase
+
+                  //    ENVELOPE ALTERATION
+
+                  case 'V':
+                  // There are no envelopes on the noise channel.
+                  if cur_channel<3
+                        alter_env()
+                  endcase
+
+                  //    SET BLOCK
+
+                  case '[':         // set start
+                  // Move start to cursor
+                  bl_start := cur_time
+                  // Move channel to cursor
+                  bl_channel := cur_channel
+                  // Move end to cursor if is now before the start
+                  if bl_start>bl_end
+                        bl_end := bl_start
+                  // Display the results
+                  disp_music()
+                  disp_status()
+                  endcase
+
+                  case ']':         // set end
+                  bl_end := cur_time
+                  bl_channel := cur_channel
+                  if bl_end<bl_start
+                        bl_start := bl_end
+                  disp_music()
+                  disp_status()
+                  endcase
+
+                  // Move the block channel without changing the limits.
+
+                  case 'C':         // set channel
+                  bl_channel := cur_channel
+                  disp_music()
+                  disp_status()
+                  endcase
+
+                  // Move the block channel to the controls
+                  // This allows copying etc. of time bars, speed changes etc
+
+                  case 'A':
+                  bl_channel := 4
+                  disp_music()
+                  disp_status()
+                  endcase
+
+                  // Copy the contents of the block to the cursor position
+
+                  case 'C'-64:      // copy block (key is [CTRL-C] )
+                  copy_block()
+                  endcase
+
+                  // Delete the contents of the block
+
+                  case 'D'-64:      // delete block (key is [CTRL-D] )
+                  delete_block()
+                  endcase
+
+                  // Transpose the block
+
+                  case 'T'-64:      // key is [CTRL-T]
+                  transpose()
+                  endcase
+
+                  //    SET BAR LENGTH
+
+                  case 'L':
+                  // Prompt for bar length, and wait for a valid response.
+                  stream(prompt_wndw)
+                  $(
+                        puts("*pEnter new bar length (2 to 24):")
+                        bar_length := getint()
+                  $)
+                  repeatuntil 2 <= bar_length <= 24
+                  // Display the changes
+                  fade_out()
+                  cls()
+                  disp_music()
+                  disp_status()
+                  fade_in()
+                  endcase
+
+                  //    MOVE TO ANY BAR
+
+                  case 'M':
+                  // Prompt for a bar number, and wait for a valid response.
+                  stream(prompt_wndw)
+                  $(
+                        puts("*pEnter bar to move to:")
+                        cur_time := bar_length * (getint()-1)
+                  $)
+                  repeatuntil 0 <= cur_time <= maxint-1
+                  cls()
+                  // The movement will take place automatically at the beginning
+                  // of the main editing loop.
+                  endcase
+
+                  //    EDIT ENVELOPES
+
+                  case 'E':
+                  edit_env()
+                  endcase
+
+                  //    CHANGE MUSIC SPEED
+
+                  case 'S':
+                  // Prompt for a new speed, and repeat until the response is
+                  // valid.
+                  stream(prompt_wndw)
+                  $(
+                        printf("*pEnter new beat length in 300th of*
+                              * second (%d to %d):",
+                              min_beat_len, max_beat_len)
+                        beat_length := getint()
+                  $)
+                  repeatuntil 1 <= beat_length <= 30000
+                  // Display the changes.
+                  fade_out()
+                  cls()
+                  disp_status()
+                  fade_in()
+                  endcase
+
+                  //    EDIT A BEAT LENGTH CHANGE
+                  // These control events alter the speed of the music.
+
+                  case 'S'-64:
+                  insert_blc()
+                  endcase
+
+                  //    EDIT A "GO TO BAR"
+                  // These alter the sequence of the music, unconditionally
+                  // jumping to a bar in the music.
+
+                  case 'G':
+                  insert_gtb()
+                  endcase
+
+                  //    EDIT A TIME BAR
+                  // These also alter the sequence, allowing a bar to be
+                  // played only a set number of times, after which it is
+                  // skipped.
+
+                  case 'T':
+                  insert_tb()
+                  endcase
+
+                  //    FILE CONTROL
+                  // A sub-section allowing the music to be put onto backing
+                  // storage (disc or cassette tape).
+
+                  case 'F':
+                  file_control()
+                  endcase
+
+                  //    TOGGLE NOTATION BETWEEN SHARPS AND FLATS
+
+                  case 'Z':
+                  test sharps
+                  $(
+                        read_data(note_name,0,"ns","C","Db","D","Eb","E","F",
+                              "Gb","G","Ab","A","Bb","B",0)
+                        sharps := false
+                  $)
+                  else
+                  $(
+                        read_data(note_name,0,"ns","C","C#","D","D#","E","F",
+                              "F#","G","G#","A","A#","B",0)
+                        sharps := true
+                  $)
+                  // Display the changes
+                  fade_out()
+                  disp_music()
+                  fade_in()
+                  endcase
+
+                  //    PLAY THE WHOLE MUSIC
+
+                  case 'P':
+                  // Check that there is some music to play
+                  unless free_space=0
+                        // Play all music from time 0 to time of last event
+                        play_music( 0, event_time!(free_space-1) )
+                  endcase
+
+                  //    PLAY THE MUSIC IN THE BLOCK
+
+                  case 'B':
+                  play_music(bl_start, bl_end)
+                  endcase
+
+                  //    DISPLAY THE MEMORY STATUS IN THE PROMPT WINDOW
+
+                  case 'F'-64:      // key is [CTRL-F]
+                  stream(prompt_wndw)
+                  printf("*p%d events used out of %d, leaving %d events free.",
+                        free_space, music_size, music_size-free_space )
+                  endcase
+
+                  //    FINISH EDITING WITH CLAVICOM
+
+                  case 'X'-64:      // key is [CTRL-X]
+                  stream(prompt_wndw)
+                  puts("*pAre you sure you want to exit CLAVICOM? (type Y or N)")
+                        key := upper(getchar())
+                  repeatuntil key='Y' | key='N'
+                  cls()
+                  // If 'Y' was typed the main editing loop is left, causing the
+                  // termination of the program.
+                  if key='Y'
+                        break
+            $)
+      $)
+      repeat
+$)
+
+//////////////////////// END OF CLAVICOM SOURCE FILE 1 ////////////////////////

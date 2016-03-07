@@ -1,1 +1,1200 @@
-////          CLAVICOM SOURCE CODE FILE 2////    Filename:               clavi1.sub//    Programmer:             Richard Brooksby//    Source language:        BCPL//    Last updated:           21JAN88//// Copyright (C) 1988, 1999 Richard Brooksby.  All rights reserved.  You// may make and distribute verbatim copies of this document provided that// you retain as they appear all copyright and licence notices.  You may// NOT charge a fee for this document or for distributing this document. // You may NOT make or distribute derivative works (modified versions) of// this document without the express written permission of the copyright// holder.//// This copyright notice was added on 1999-09-20.//    ALTERING MUSICAL NOTES// The keys [SHIFT-up arrow] and [SHIFT-down arrow] alter the note name// (C,C#,D...) and the [SHIFT-left arrow] and [SHIFT-right arrow] alter the// octave of the note.and alter_note() be$(      static $( ev = void; note = void; oct = void $)      // Try to find the event apon which the cursor is located.      ev := find_event( cur_time, cur_channel )      // Insert a new note if there is none      if ev=-1      $(            // Try to insert, but give up if there is no space in the music.            unless insert_event(placing,cur_time,(cur_channel<<8)+#x30)            $(                  putchar(7)        // Beep.                  return            // exit the function            $)            ev := placing      $)      // Extract the note and octave information, and adjust for keys      note := (event!ev & #x0F) + (key=245)-(key=244)      oct := ((event!ev & #xF0) >> 4) + (key=246)-(key=247)      // Allow movement between octaves (this also forces the note legal)      test note>12            note,oct := note-13, oct+1      else            if note<0                  note,oct := note+13, oct-1      // Limit the octave to legal values (the octave is excess 3)      oct := limit(oct, 0, 6)      // Form the new note data in the music      event!ev := event!ev & #xFF00 | note | (oct << 4)      disp_event(ev)$)// ALTERING WHITE NOISE// The keys [SHIFT-up arrow] and [SHIFT-down arrow] adjust the period of the// white noise. This changes the quality from a hiss to a rumble. The [SHIFT-// left arrow] and [SHIFT-right arrow] adjust the channel with which the noise// will be mixed.and alter_noise() be$(      static $( ev = void; channel = void; period = void $)      // Try to find the event on which the cursor is located.      ev := valof      $(            // Look on all channels, noise on any channel may be edited.            for i=3 to 5            $(                  ev := find_event( cur_time, i )                  unless ev=-1      // event found?                        resultis ev            $)            resultis -1             // no event found      $)      // Insert a new noise if necessary      if ev=-1      $(            // Try to insert a new event            unless insert_event(placing,cur_time,256*3+1)            $(                  putchar(7)        // beep if there is no space...                  return            // ..and exit alter_noise()            $)            ev := placing      $)      // Extract the period and channel information from the event, and adjust      // according to the keys pressed.      channel := limit( (event!ev >> 8) +(key=246)-(key=247), 3,5 )      period := limit( (event!ev & 31) +(key=245)-(key=244), 1,31 )      // Re-form the event according to the new data.      event!ev := channel<<8 | period      // Display the changed event.      disp_event(ev)$)// ALTER THE EVENT SETTINGS IN THE MUSIC// The new envelopes are prompted for, rather than edited using special keys.and alter_env() be$(      // Local routine to input an envelope letter, or leave it unchanged.      let get_env(old_env) = valof      $(            $(                  // Wait for a key, and convert to upper case.                  key := upper(getchar())                  // The ENTER key leaves the envelope unchanged.                  if key = 13                  $(                        puts("unchanged")                        resultis old_env                  $)                  // The SPACE BAR gives a blank envelope, which has no effect                  // on the music.                  if key = 32                  $(                        puts("none")                        resultis 0                  $)            $)            repeatuntil 'A'<=key<='O'            // Display the key pressed            putchar(key)            resultis key-'A'+1      // return the envelope number      $)      static $( ev = void $)      // Prompt for the new envelopes in the command window.      stream(command_wndw)      cls()      // Look for an existing envelope event under the cursor.      // Look for a permanant change...      ev := find_event( cur_time, cur_channel+6 )      // ...or a one-note change if there is no permanant change.      if ev=-1            ev := find_event( cur_time, cur_channel+9 )      // Add a new envelope event if necessary      if ev=-1      $(            ev := placing            // Try to insert a new event            unless insert_event(ev,cur_time,(cur_channel+6)<<8)            $(                  putchar(7)        // Beep if there is no room in the music                  return            // and give up.            $)            // Prompt for the type of envelope required.            puts("Do you want a one-note or a permanant envelope change?*                  * (type O or P)*n")                  key := upper(getchar())            repeatuntil key='O' | key='P'            if key='O'                  event!ev := (cur_channel+9)<<8      $)      // Give some instructions      puts("Type the letter of the new envelope, or type SPACE for no*            * envelope. Type ENTER*nto leave the envelope unchanged.")      // Prompt for the new envelopes from the user.      puts("*n*nType volume envelope:")      event!ev := event!ev & #xFF0F | (get_env( (event!ev>>4) & #x0F )<<4)      puts("*n*nType tone envelope:")      event!ev := event!ev & #xFFF0 | get_env( event!ev & #x0F )      cls()      // Delete the envelope event if both the envelopes given were blank.      if (event!ev & #xFF)=0      $(            delete_event( wipe_event(ev) )            return      $)      // Display the changed envelope event      disp_event(ev)$)//    EDIT THE ENVELOPE SHAPES// This routine is used to alter the shaped of envelopes. The way an envlope is// stored is essentially the same for both volume and tone envelopes, even// though their function is different.and edit_env() be$(      static      $(            env = 'A'               // envelope letter currently being edited            volume = true           // a flag determining envelope type            data = void             // the address of the envelope data            cur_row = 1             // the cursor row      $)      // Local routine, displays one line of envelope data.      // Inverse video is used if the second parameter is true.      // row zero means "display the status line"      let disp_row(row,inverse) be      $(            // The status line displays the type and letter of the envelope,            // and whether or not a tone envelope is of the repeating sort.            unless row            $(                  locate(1,1)                  printf("%s envelope %c. %s*x12",                        ( volume -> "Volume","Tone" ) ,                        env,                        ( (!data & #x80)=0 -> "","(repeating)" ) )                  return            $)            if inverse then putchar(24)            // The segment is displayed as "ppp steps of qqq each lasting rrr"            locate(1,row+1)            printf("%3d steps of %4d, each lasting %3d",                  data!(row*3-2), data!(row*3-1), data!(row*3) )            if inverse then putchar(24)      $)      // Local routine, display whole envelope      let disp_env() be      $(            // Force the envelope to have at least one section            if (!data & #x7F)=0                  !data := 1            // Displayt the status line and all the data lines            for i=0 to !data & #x7F                  disp_row(i,false)            // Clear rest of window            putchar(20)      $)      // Display a summary of the keys which are used for editing.      stream(command_wndw)      cls()      stream(rh_cmnd_wndw)      puts("*p        count size time*n*            *        +----+----+----+*n*            * up     | 4  | 5  | 6  |*n*            *        +----+----+----+*n*            * down   | 1  | 2  | 3  |*n*            *        +----+----+----+*n*            *  Vol, Tone, Repeat, ENTER" )      stream(lh_cmnd_wndw)      // Calculate the data address of the envelope      data := env_address(volume,env)      // Display the envelope      disp_env()      // Edit the envelope      $(            // Limit the cursor row within legal values. This is from 1 to the            // number of segments in the envelope.            cur_row := limit(cur_row, 1, !data & #x7F)            // Display row in inverse video (black on white)            disp_row( cur_row, true )            key := upper(getchar())            disp_row( cur_row, false )            switchon key into            $(                  // Cursor movement                  // [up arrow] and [down arrow] change the cursor row                  case 240: case 241:                  cur_row := cur_row + (key=240)-(key=241)                  endcase                  // Extension of envelope                  // [SHIFT-up arrow] and [SHIFT-down arrow] alter the number of                  // segments in the envelope.                  case 244: case 245:                  !data := !data & #x80 | limit(                        (!data & #x7F) + (key=244)-(key=245), 1,5 )                  disp_env()                  endcase                  // Switch to volume envelope                  // The V key changes editing to the volume envelopes.                  case 'V':                  volume := true                  data := env_address(volume,env)                  disp_env()                  endcase                  // Switch to tone envelope                  // The T key switches to editing tone envelopes.                  case 'T':                  volume := false                  data := env_address(volume,env)                  disp_env()                  endcase                  // Alter values in envelope                  // [1] and [4] change the number of steps on the cursor row                  case '1': case '4':                  data!(cur_row*3-2) := limit(                        data!(cur_row*3-2) + (key='1')-(key='4'),                        0,255 )                  endcase                  // [5] and [2] change the size of each step                  case '5': case '2':                  data!(cur_row*3-1) := limit(                        data!(cur_row*3-1) + (key='2')-(key='5'),                        -128,127 )                  endcase                  // [6] and [3] change the duration of each step                  case '6': case '3':                  data!(cur_row*3) := limit(                        data!(cur_row*3) + (key='3')-(key='6'),                        0,255 )                  endcase                  // Set repeating/non-repeating                  // A tone envelope can be made to repeat itself while a sound                  // is being played. A vibrato effect can be achieved by the                  // repeating of a simple step-up step-down envelope.                  case 'R':                  unless volume                  $(                        !data := !data neqv #x80                        disp_env()                  $)                  endcase                  // Alter envelope being edited                  // Pressing a letter changes the envelope being edited to that                  // letter.                  default:                  if 'A' <= key <= 'O'                  $(                        env := key                        data := env_address(volume,env)                        disp_env()                  $)            $)      $)      repeatuntil key=13      // finish session on ENTER key      // Clear the command window (includes the half windows)      stream(command_wndw)      cls()$)//    INSERT A BEAT LENGTH CHANGE IN MUSIC// A beat-length-change (blc) allows the speed of the music to be changed while// it is playing. The blc alters the speed by a percentage, so that if the// overall beat_length is altered, the relative speed change is the same.and insert_blc() be$(      static $( ev = void; change = void $)      // If there is already a beat-length-change at the cursor, delete it.      ev := find_event( cur_time, 12 )      unless ev=-1      $(            delete_event(ev)            placing := ev      $)      // Ask the user by how many percent the new blc will change the speed.      // Entering 0 has the effect of deleting an existing blc.      stream(prompt_wndw)      $(            puts("*pType the percental beat length change (0, 10 to 255):")            change := getint()      $)      repeatuntil 10<=change<=255 | change=0      cls()      test change      $(            // Insert a beat-length-change event with the new value.            insert_event( placing, cur_time, (12<<8) | change )            // Dislay the event            disp_event(placing)      $)      else            // Display the whole music, thus deleting the blc.            disp_music()      // NB no fade-out$)//    INSERT A GO-TO-BAR// A go-to-bar event (gtb) allows the music to be looped. By using time-bar// events it is possible to have a finite loop count.and insert_gtb() be$(      static $( ev = void; bar = void $)      // Check if there is already a go-to-bar, and delete it.      ev := find_event(cur_time, -1)      unless ev=-1      $(            delete_event(ev)            placing := ev      $)      // Prompt for the bar which the music will skip to.      // Entering 0 will have the effect of deleting an existing gtb.      stream(prompt_wndw)      puts("*pType the bar number to go to:")      bar := getint()      cls()      test bar      $(            // Insert a go-to-bar event, with the new data            insert_event( placing, cur_time, -bar )            // Display the new event            disp_event(placing)      $)      else            // Display the music, without the gtb.            disp_music()      // NB no fade-out$)//    INSERT A TIME BAR// A time-bar event (tb) allows a bar to be played a finite number of times,// before it is skipped. The effect is analogous to the time-bar in standard// musical notation.and insert_tb() be$(      static $( ev = void; bar = void; size = void $)      // Check if there is already a time-bar, and delete it.      // Since a time bar may have several different "type" values, a search      // of all possible values is made.      for i=13 to 20      $(            ev := find_event(cur_time, i)            if ev>=0 then break      $)      unless ev=-1      $(            delete_event(ev)            placing := ev      $)      // Prompt for number of repeats allowed. Entering 0 has the effect of      // deleting an existing time-bar.      stream(prompt_wndw)      $(            puts("*pType the number of plays before the bar is skipped *                  *(1 to 15):")            bar := getint()      $)      repeatuntil 0<=bar<=15      cls()      // unless zero was typed...      test bar      $(            // Prompt for the number of bars to skip, once the play count has            // been reached.            $(                  puts("*pType the number of bars to skip (1 to 8):")                  size := getint()            $)            repeatuntil 1<=size<=8            cls()                              // Insert a time bar event with the new values.            insert_event( placing, cur_time, ((12+size)<<8) | bar )            // Display the event            disp_event(placing)      $)      else            // Display the music, without the event.            disp_music()      // NB no fade-out$)     //    PLAY THE MUSIC// The music is played from the given start time to the given end time// inclusive. If the flow of music goes outside the range given the music is// stopped. The music is also stopped if a key is pressed.and play_music(start,end) be$(      // Local variables      static      $(            // Faster access storage for events.            ev = void; data = void            // The current time in terms of beats.            time = void            // These are the envelopes, changed by permanant envelope changes            // in the music.            volA = void; volB = void; volC = void            toneA= void; toneB= void; toneC= void            // These flags indicate whether there is a musical note at this            // time on each channel.            note_on_A = void            note_on_B = void            note_on_C = void            beat_time = void        // The beat length DURING the music            last_clock= void        // see zero_clock() and wait_clock()            go_to_bar = void        // used when a go-to-bar is requested      $)      // Local routine, returns the tone period of a note.      // The period is used by the hardware, and represents the actual period      // of the sound waves emitted by the chip.      // NB non-sounds (note 0) return a value of zero      // The routine looks up period on the lowest octave, and divide by two      // for each octave. Musical notes double in frequency for each octave.      let period(note) = ( (note & #x0F) ! table 0,            3822,3608,3405,3214,3034,2863,2703,2551,2408,2273,2145,2025) >>            ( ( (note & #xF0) >> 4) +1)      // Local routine, sets the time on the firmware clock to zero. The firmware      // clock ticks at 300Hz, and is maintained automatically.      let zero_clock(beat) be      $(            inline #x11,0,0         // ld de,0            inline #x21,0,0         // ld hl,0            inline #xCD,#x10,#xBD   // call kl_time_set            last_clock := 0      $)      // Local routine, waits for beat_time ticks of the firmware clock since      // the last time the routine was called (or the clock zeroed).      let wait_clock() be      $(            // Local local routine, returns the bottom 16 bits of the firmware            // clock.            let clock() = valof            $(                  let time=?                  // get the firmware clock                  inline #xCD,#x0D,#xBD     // call kl_time_please                  inline #xDD,#x74,121      // ld (ix+121),h                  inline #xDD,#x75,120      // ld (ix+120),l                  resultis time            $)                              // Wait for beat_time ticks            while clock()-last_clock < beat_time                  loop            // Store the current time for next call of wait_clock()            last_clock := last_clock + beat_time      $)      // Stack variables for play_music()      let soundA = vec 6      // } These blocks are fed to the OS to form      and soundB = vec 6      // } the sounds. The entries are altered by      and soundC = vec 6      // } the events in the music arrays.      // Set up the inital data in the sound blocks and envelopes.      // These blocks are altered as the music changes. The information stored      // is:      element     data      //          0           channel status, bit 7=new sound, bit 0,1,2=A,B,C      //          1           tone period of sound      //          2           duration of sound (can be ignored if envelope used)      //          3           volume of sound (can also be ignored)      //          4           volume envelope number      //          5           tone envelope number      //          6           noise period (0 for no noise)      read_data( soundA, -1, 129, 0, 0, 0, 0, 0, 0, -1 )      read_data( soundB, -1, 130, 0, 0, 0, 0, 0, 0, -1 )      read_data( soundC, -1, 132, 0, 0, 0, 0, 0, 0, -1 )      // Initially the volume envelopes are all set to A, and the tone      // envelopes are not set.      volA := 1; volB := 1; volC := 1      toneA:= 0; toneB:= 0; toneC:= 0      // Copy the beat length and time into working variables      beat_time := beat_length      time := start      // Clear the go_to_bar flag      go_to_bar := -1      // Send all the envelopes to the firmware      set_all_env()      // Zero all time bar counts in the music      for i=0 to free_space-1            // Is the event a time bar?            if 13 <= (event!i >> 8) <= 20                  // mask out any counts                  event!i := event!i & #xFF0F      // Find the first event after the supplied start time      ev := event_after(time)      // Zero the clock      zero_clock()      // Continue while the specified end time has not been exceeded, or until      // a key is pressed.      while start <= time <= end & not key_pressed()      $(            // Clear one-off events (noise and one-off envelopes)            soundA!6, soundB!6, soundC!6 := 0,0,0            soundA!4, soundB!4, soundC!4 := volA,volB,volC            soundA!5, soundB!5, soundC!5 := toneA,toneB,toneC            note_on_A, note_on_B, note_on_C := false, false, false            // Process all events which occur at this time            // Check for time match            while event_time!ev = time & ev < free_space            $(                  // extract the event data                  data := event!ev                  // switch on data type                  switchon data>>8 into                  $(                        // MUSICAL NOTES                        // Their period is calculated and entered into the sound                        // block. A flag is then set to indicate that a sound                        // has occurred and needs playing.                        case 0:                        soundA!1 := period(data & #xFF)                        note_on_A := true                        endcase                        case 1:                        soundB!1 := period(data & #xFF)                        note_on_B := true                        endcase                        case 2:                        soundC!1 := period(data & #xFF)                        note_on_C := true                        endcase                        // Noise mixed with the tone channels                        // Noise is entered into the sound blocks in the same                        // way as a note. However, a noise on its own does not                        // set the flag and cause the sound to be played.                        case 3:                        soundA!6 := data & #xFF                        endcase                        case 4:                        soundB!6 := data & #xFF                        endcase                        case 5:                        soundC!6 := data & #xFF                        endcase                        // Permanant envelope changes                        // Permanant changes are copied into the volX and toneX                        // variables, and so effect all subsequent notes. They                        // are also copied immediately into the sound blocks.                        case 6:                        unless (data & #xF0)=0                              volA := (data & #xF0) >> 4                        unless (data & #x0F)=0                              toneA := (data & #x0F)                        soundA!4, soundA!5 := volA, toneA                        endcase                        case 7:                        unless (data & #xF0)=0                              volB := (data & #xF0) >> 4                        unless (data & #x0F)=0                              toneB := (data & #x0F)                        soundB!4, soundB!5 := volB, toneB                        endcase                        case 8:                        unless (data & #xF0)=0                              volC := (data & #xF0) >> 4                        unless (data & #x0F)=0                              toneC := (data & #x0F)                        soundC!4, soundC!5 := volC, toneC                        endcase                        // One-off envelope changes                        // These envelopes are entered into the sound blocks                        // only, and so will effect only the note above which                        // they are placed.                        case 9:                        unless (data & #xF0)=0                              soundA!4 := (data & #xF0) >> 4                        unless (data & #x0F)=0                              soundA!5 := (data & #x0F)                        endcase                        case 10:                        unless (data & #xF0)=0                              soundB!4 := (data & #xF0) >> 4                        unless (data & #x0F)=0                              soundB!5 := (data & #x0F)                        endcase                        case 11:                        unless (data & #xF0)=0                              soundC!4 := (data & #xF0) >> 4                        unless (data & #x0F)=0                              soundC!5 := (data & #x0F)                        endcase                        // Change in beat length                        // The new beat_time is calculated from the old as a                        // percentage.                        case 12:                        beat_time := ( beat_time * (data & #xFF) )/100                        endcase                        // TIME BARS                        case 13: case 14: case 15: case 16:                        case 17: case 18: case 19: case 20:                        // Has the time bar already had its final play?                        test ((data >>4) & #x0F) >= (data & #x0F)                        $(                              // Skip the following bars                              go_to_bar :=                                    (time/bar_length+ (data>>8)-11 )*bar_length                              // And reset the play count for next time                              event!ev := event!ev & #xFF0F                        $)                        else                              // Increment the play count by one                              event!ev := event!ev + #x10                        endcase                        // Go to another bar in music                        // Note that this is caused by any event with a data                        // type less than zero. (MSB set)                        default:                        if data<0                              go_to_bar := (abs(data)-1) * bar_length                  $)                  // Move to the next event and process that (if occurs at this                  // time).                  ev := ev+1            $)            // Wait for the time at which the events sound. All the events for            // this time have been pre-processed, and so there will be no delay            // in sounding them.            wait_clock()            // Make the pre-prepared sounds            if note_on_A then sound(soundA)            if note_on_B then sound(soundB)            if note_on_C then sound(soundC)            // Has the music been requested to go to another bar?            test go_to_bar>=0            $(                  time := go_to_bar                  ev := event_after(time)                  go_to_bar := -1            $)            else                  // Go back and process the next set of events                  time := time+1      $)      // Move the cursor to wherever the music had got to before returning to      // editing.      cur_time := time$)// FILE CONTROL// A small sub-menu allows the saving and loading of music, as well as a// catalog of the disc or tape.and file_control() be$(      // Local routine, saves the entire music to disc or tape. The file used      // is a serial ASCII file, and the numeric data is stored in ASCII form.      let save_music() be      $(            let name=vec 8          // Space for filename string            and buffer=vec 1024     // 2K buffer for the OS            // Prompt for, and input, the name for the new file.            puts("*p       SAVE MUSIC*n*nInput name for file:")            gets(name,12)            // Try to open the new file            unless open_out(name,buffer)            $(                  // ERRORS: The operating system reports any errors, so just                  // wait for a key before aborting.                  getchar()                  return            $)            // Save the music speed and bar length            writen(beat_length)            writen(bar_length)            // Save the envelope shapes            for i=0 to nr_envelopes*16*2-1                  writen(envelopes!i)            // Save the music data, preceded by the length of the music array            writen(free_space)            for i=0 to free_space-1            $(                  writen(event_time!i)                  writen(event!i)            $)            // Close the file            unless close_out()                  // ERRORS: The operating system reports any errors, so just                  // wait for a key.                  getchar()      $)      // Local routine, load entire music. This routine is simply the inverse of      // the save routine above.      let load_music() be      $(            let name=vec 8          // Space for file name            and buffer=vec 1024     // 2K buffer for OS            // Prompt for, and input, the name of the file to load.            puts("*p       LOAD MUSIC*n*nInput name of file:")            gets(name,12)            // Try to open the file            unless open_in(name,buffer)            $(                  // ERRORS: The operating system reports any errors, so just                  // wait for a key before aborting.                  getchar()                  return            $)            // Load the music speed from the file.            // NB the ADDRESS of the destination variable is supplied to the            // readn() routine.            readn(@beat_length)            readn(@bar_length)            // Load the envelope shapes            for i=0 to nr_envelopes*16*2-1                  readn(envelopes+i)            // Load the music data, preceded by the length            readn(@free_space)            for i=0 to free_space-1            $(                  readn(event_time+i)                  readn(event+i)            $)            // Close the file            unless close_in()                  // ERRORS: The operating system reports any errors, so just                  // wait for a key before aborting.                  getchar()      $)      // Local routine, catalogs the disc or tape. This routine is built into      // the firmware, and must be supplied with a 2K buffer.      let catalog() be      $(            let buffer = vec 1024            // The whole screen is needed for a full disc catalog            mode(2)            // Call the OS to display a catalog            inline #xDD,#x6E,120    // LD L,(IX+120)            inline #xDD,#x66,121    // LD H,(IX+121)            inline #x29             // ADD HL,HL            inline #xEB             // EX DE,HL            inline #xDD,#xE5        // PUSH IX            inline #xCD,#x9B,#xBC   // CALL cas catalog            inline #xDD,#xE1        // POP IX            // Wait for a keypress            puts("Press ENTER to return to editing")            while getchar() \= 13                  loop            // Rebuild the music on the screen            setup_screen()      $)      // FILE CONTROL MENU      // Switch to command window, and display the file control menu.      stream(command_wndw)      puts( "*p       FILE OPERATIONS*n*            *S: Save music (including envelopes, speed etc)*n*            *L: Load music (as above)*n*            *C: Catalog disc/tape" )      $(            // Wait for a key            key := upper(getchar())            switchon key into            $(                  // Save the music                  case 'S':                  save_music()                  cls()                  return                  // Load some music                  case 'L':                  load_music()                  // Display the loaded music                  fade_out()                  cls()                  disp_music()                  disp_status()                  fade_in()                  return                  // Catalog the disc or tape                  case 'C':                  catalog()                  return                  // A key that was not on the menu has been pressed.                  default:                  putchar(7)  // BEEP            $)      $)      repeat      // until a valid key was pressed.$)//    DELETE THE EVENTS IN THE MARKED BLOCK// This is a complex process because although the block exists only on one// channel, the music array contains all the channels. Events which are in the// block must be searched for and deleted individualy.and delete_block() be$(      // Check that the user really wants to delete the block      stream(prompt_wndw)      puts("*pDelete block: are you sure? (Y/N)")            key := upper(getchar())      repeatuntil key='Y' | key='N'      cls()                         // clear the prompt window      if key='N' then return        // return if user was not sure.      puts("Deleting...")      // Delete events on the block channel.      del_events( event_after(bl_start), event_after(bl_end+1)-1, bl_channel)      // Display the changes      fade_out()      cls()                         // clear prompt window      disp_music()                  // re-display the music      fade_in()                     // fade in the changes.$)//    COPY EVENTS IN THE MARKED BLOCK TO THE CURSOR POSITION// This is a very complex operation, since the block position may be moved// by the act of inserting a new event. The routines find_first() and// find_next() overcome this difficulty by using the global variable block_ev,// which is altered by the insertion routine to ensure it remains on the same// event. The process if further complicated if the destination and source// channels are different. In this case the event data must be altered in order// to change channels.and copy_block() be$(      static      $(            // The block, in terms of events rather than time            start = void; end = void; length = void            // The destination, in terms of events rather than time            dest = void; dest_end = void; dest_chan = void      $)      // Move to the prompt window      stream(prompt_wndw)      // Find the position of the block      start := event_after(bl_start)      end := event_after(bl_end+1)-1      length := count_events(start,end,bl_channel)      // take no action if the block contains no events      unless start<=end            return      // Work out where the block is going      dest := event_after(cur_time)      dest_end := event_after(cur_time+ bl_end-bl_start +1)-1      // Noise, and control events cannot be copied to tone channels, (and vice      // versa) so the channel of the cursor is ignored in their case.      test bl_channel>=3            dest_chan := bl_channel // noise or control      else            dest_chan := cur_channel// tone      // Check that there is room in the music for a copy      if free_space + end-start +1 > music_size      $(            puts("*p*x07Not enough room for a copy. Press a key.")            getchar()               // wait for a key            cls()            return      $)      // Check that source and destination do not overlap. (There is no problem      // if the source and destination are on different channels, or if the      // destination area is empty.)      // pseudo-code for the next if statement:      // if the source and destination are on the same channel, and there are      // some events in the destination area, and either the start of the      // destination is inside the source area, or the start of the source is      // in the destination area, then there is a problem!      if dest_chan=bl_channel & dest<=dest_end &            ( start<=dest<=end | dest<=start<=dest_end )      $(            puts("*p*x07Cannot copy: block and destination overlap. *                  *Press a key.")            getchar()            cls()            return      $)      puts("*pCopying...")      // Delete events in the destination area      if dest<free_space            del_events(dest, dest_end, dest_chan)      // Copy the block into position      // Find the first event in the block      find_first()      $(            // Get event from block, and calculate its new time.            let ev = event!block_ev            and new_time = event_time!block_ev - bl_start + cur_time            // Change the channel of the event if necessary. This is done by            // rounding the event status to the nearest three, and adding the            // destination channel. This cannot occur with control and noise            // events, since dest_chan=bl_channel            unless dest_chan=bl_channel                  ev := ev & #xFF | (((ev>>8)/3)*3 + dest_chan )<<8            // Insert the copy into its new position in the music            insert_event( event_after(new_time), new_time, ev)            // Find the next event in the block            find_next()      $)      repeatuntil block_ev=-1       // until there are no more events.      // Display the changes      fade_out()      cls()      disp_music()      fade_in()$)//    TRANSPOSE THE BLOCKand transpose() be$(      static $( offset = void $)      stream(prompt_wndw)           // input is in the prompt window      // Prompt for the transposal distance      $(            puts("*pEnter the number of semitones to transpose by (-60 to 60):")            offset := getint()      $)      repeatuntil -60 <= offset <= 60                                    // check for legal values      cls()                         // clear prompt window      // Do nothing if no offset given.      unless offset            return      // Transpose the notes in the block.      find_first()      until block_ev=-1             // until end of block      $(            let data = event!block_ev                                    // get data from event            // Only transpose musical notes            if 0 <= (data >> 8) <= 2                  // mask in the new note data                  event!block_ev := (data & #xFF00) | trans_note(data,offset)            // find next event in block            find_next()      $)      // Display the changes      fade_out()      disp_music()      fade_in()$)//////////////////////// END OF CLAVICOM SOURCE FILE 2 ////////////////////////
+//
+//          CLAVICOM SOURCE CODE FILE 2
+//
+//    Filename:               clavi1.sub
+//    Programmer:             Richard Brooksby
+//    Source language:        BCPL
+//    Last updated:           21JAN88
+//
+
+// Copyright (C) 1988, 1999 Richard Brooksby.  All rights reserved.  You
+// may make and distribute verbatim copies of this document provided that
+// you retain as they appear all copyright and licence notices.  You may
+// NOT charge a fee for this document or for distributing this document. 
+// You may NOT make or distribute derivative works (modified versions) of
+// this document without the express written permission of the copyright
+// holder.
+//
+// This copyright notice was added on 1999-09-20.
+
+
+//    ALTERING MUSICAL NOTES
+// The keys [SHIFT-up arrow] and [SHIFT-down arrow] alter the note name
+// (C,C#,D...) and the [SHIFT-left arrow] and [SHIFT-right arrow] alter the
+// octave of the note.
+
+and alter_note() be
+$(
+      static $( ev = void; note = void; oct = void $)
+
+      // Try to find the event apon which the cursor is located.
+      ev := find_event( cur_time, cur_channel )
+
+      // Insert a new note if there is none
+      if ev=-1
+      $(
+            // Try to insert, but give up if there is no space in the music.
+            unless insert_event(placing,cur_time,(cur_channel<<8)+#x30)
+            $(
+                  putchar(7)        // Beep.
+                  return            // exit the function
+            $)
+            ev := placing
+      $)
+
+      // Extract the note and octave information, and adjust for keys
+
+      note := (event!ev & #x0F) + (key=245)-(key=244)
+      oct := ((event!ev & #xF0) >> 4) + (key=246)-(key=247)
+
+      // Allow movement between octaves (this also forces the note legal)
+      test note>12
+            note,oct := note-13, oct+1
+      else
+            if note<0
+                  note,oct := note+13, oct-1
+
+      // Limit the octave to legal values (the octave is excess 3)
+
+      oct := limit(oct, 0, 6)
+
+      // Form the new note data in the music
+
+      event!ev := event!ev & #xFF00 | note | (oct << 4)
+
+      disp_event(ev)
+$)
+
+// ALTERING WHITE NOISE
+// The keys [SHIFT-up arrow] and [SHIFT-down arrow] adjust the period of the
+// white noise. This changes the quality from a hiss to a rumble. The [SHIFT-
+// left arrow] and [SHIFT-right arrow] adjust the channel with which the noise
+// will be mixed.
+
+and alter_noise() be
+$(
+      static $( ev = void; channel = void; period = void $)
+
+      // Try to find the event on which the cursor is located.
+      ev := valof
+      $(
+            // Look on all channels, noise on any channel may be edited.
+            for i=3 to 5
+            $(
+                  ev := find_event( cur_time, i )
+                  unless ev=-1      // event found?
+                        resultis ev
+            $)
+            resultis -1             // no event found
+      $)
+
+      // Insert a new noise if necessary
+      if ev=-1
+      $(
+            // Try to insert a new event
+            unless insert_event(placing,cur_time,256*3+1)
+            $(
+                  putchar(7)        // beep if there is no space...
+                  return            // ..and exit alter_noise()
+            $)
+            ev := placing
+      $)
+
+      // Extract the period and channel information from the event, and adjust
+      // according to the keys pressed.
+      channel := limit( (event!ev >> 8) +(key=246)-(key=247), 3,5 )
+      period := limit( (event!ev & 31) +(key=245)-(key=244), 1,31 )
+
+      // Re-form the event according to the new data.
+      event!ev := channel<<8 | period
+
+      // Display the changed event.
+      disp_event(ev)
+$)
+
+// ALTER THE EVENT SETTINGS IN THE MUSIC
+// The new envelopes are prompted for, rather than edited using special keys.
+
+and alter_env() be
+$(
+      // Local routine to input an envelope letter, or leave it unchanged.
+      let get_env(old_env) = valof
+      $(
+            $(
+                  // Wait for a key, and convert to upper case.
+                  key := upper(getchar())
+
+                  // The ENTER key leaves the envelope unchanged.
+                  if key = 13
+                  $(
+                        puts("unchanged")
+                        resultis old_env
+                  $)
+
+                  // The SPACE BAR gives a blank envelope, which has no effect
+                  // on the music.
+                  if key = 32
+                  $(
+                        puts("none")
+                        resultis 0
+                  $)
+            $)
+            repeatuntil 'A'<=key<='O'
+
+            // Display the key pressed
+            putchar(key)
+
+            resultis key-'A'+1      // return the envelope number
+      $)
+
+      static $( ev = void $)
+
+      // Prompt for the new envelopes in the command window.
+      stream(command_wndw)
+      cls()
+
+      // Look for an existing envelope event under the cursor.
+      // Look for a permanant change...
+      ev := find_event( cur_time, cur_channel+6 )
+      // ...or a one-note change if there is no permanant change.
+      if ev=-1
+            ev := find_event( cur_time, cur_channel+9 )
+
+      // Add a new envelope event if necessary
+      if ev=-1
+      $(
+            ev := placing
+            // Try to insert a new event
+            unless insert_event(ev,cur_time,(cur_channel+6)<<8)
+            $(
+                  putchar(7)        // Beep if there is no room in the music
+                  return            // and give up.
+            $)
+
+            // Prompt for the type of envelope required.
+            puts("Do you want a one-note or a permanant envelope change?*
+                  * (type O or P)*n")
+                  key := upper(getchar())
+            repeatuntil key='O' | key='P'
+
+            if key='O'
+                  event!ev := (cur_channel+9)<<8
+      $)
+
+      // Give some instructions
+      puts("Type the letter of the new envelope, or type SPACE for no*
+            * envelope. Type ENTER*nto leave the envelope unchanged.")
+
+      // Prompt for the new envelopes from the user.
+      puts("*n*nType volume envelope:")
+      event!ev := event!ev & #xFF0F | (get_env( (event!ev>>4) & #x0F )<<4)
+      puts("*n*nType tone envelope:")
+      event!ev := event!ev & #xFFF0 | get_env( event!ev & #x0F )
+      cls()
+
+      // Delete the envelope event if both the envelopes given were blank.
+      if (event!ev & #xFF)=0
+      $(
+            delete_event( wipe_event(ev) )
+            return
+      $)
+
+      // Display the changed envelope event
+      disp_event(ev)
+$)
+
+//    EDIT THE ENVELOPE SHAPES
+// This routine is used to alter the shaped of envelopes. The way an envlope is
+// stored is essentially the same for both volume and tone envelopes, even
+// though their function is different.
+
+and edit_env() be
+$(
+      static
+      $(
+            env = 'A'               // envelope letter currently being edited
+            volume = true           // a flag determining envelope type
+            data = void             // the address of the envelope data
+            cur_row = 1             // the cursor row
+      $)
+
+      // Local routine, displays one line of envelope data.
+      // Inverse video is used if the second parameter is true.
+      // row zero means "display the status line"
+
+      let disp_row(row,inverse) be
+      $(
+            // The status line displays the type and letter of the envelope,
+            // and whether or not a tone envelope is of the repeating sort.
+            unless row
+            $(
+                  locate(1,1)
+                  printf("%s envelope %c. %s*x12",
+                        ( volume -> "Volume","Tone" ) ,
+                        env,
+                        ( (!data & #x80)=0 -> "","(repeating)" ) )
+                  return
+            $)
+
+            if inverse then putchar(24)
+
+            // The segment is displayed as "ppp steps of qqq each lasting rrr"
+            locate(1,row+1)
+            printf("%3d steps of %4d, each lasting %3d",
+                  data!(row*3-2), data!(row*3-1), data!(row*3) )
+
+            if inverse then putchar(24)
+      $)
+
+      // Local routine, display whole envelope
+
+      let disp_env() be
+      $(
+            // Force the envelope to have at least one section
+
+            if (!data & #x7F)=0
+                  !data := 1
+
+            // Displayt the status line and all the data lines
+            for i=0 to !data & #x7F
+                  disp_row(i,false)
+
+            // Clear rest of window
+            putchar(20)
+      $)
+
+      // Display a summary of the keys which are used for editing.
+
+      stream(command_wndw)
+      cls()
+      stream(rh_cmnd_wndw)
+      puts("*p        count size time*n*
+            *        +----+----+----+*n*
+            * up     | 4  | 5  | 6  |*n*
+            *        +----+----+----+*n*
+            * down   | 1  | 2  | 3  |*n*
+            *        +----+----+----+*n*
+            *  Vol, Tone, Repeat, ENTER" )
+
+
+      stream(lh_cmnd_wndw)
+
+      // Calculate the data address of the envelope
+
+      data := env_address(volume,env)
+
+      // Display the envelope
+
+      disp_env()
+
+      // Edit the envelope
+
+      $(
+            // Limit the cursor row within legal values. This is from 1 to the
+            // number of segments in the envelope.
+            cur_row := limit(cur_row, 1, !data & #x7F)
+
+            // Display row in inverse video (black on white)
+            disp_row( cur_row, true )
+            key := upper(getchar())
+            disp_row( cur_row, false )
+
+            switchon key into
+            $(
+                  // Cursor movement
+                  // [up arrow] and [down arrow] change the cursor row
+                  case 240: case 241:
+                  cur_row := cur_row + (key=240)-(key=241)
+                  endcase
+
+                  // Extension of envelope
+                  // [SHIFT-up arrow] and [SHIFT-down arrow] alter the number of
+                  // segments in the envelope.
+                  case 244: case 245:
+                  !data := !data & #x80 | limit(
+                        (!data & #x7F) + (key=244)-(key=245), 1,5 )
+                  disp_env()
+                  endcase
+
+                  // Switch to volume envelope
+                  // The V key changes editing to the volume envelopes.
+                  case 'V':
+                  volume := true
+                  data := env_address(volume,env)
+                  disp_env()
+                  endcase
+
+                  // Switch to tone envelope
+                  // The T key switches to editing tone envelopes.
+                  case 'T':
+                  volume := false
+                  data := env_address(volume,env)
+                  disp_env()
+                  endcase
+
+                  // Alter values in envelope
+
+                  // [1] and [4] change the number of steps on the cursor row
+
+                  case '1': case '4':
+                  data!(cur_row*3-2) := limit(
+                        data!(cur_row*3-2) + (key='1')-(key='4'),
+                        0,255 )
+                  endcase
+
+                  // [5] and [2] change the size of each step
+
+                  case '5': case '2':
+                  data!(cur_row*3-1) := limit(
+                        data!(cur_row*3-1) + (key='2')-(key='5'),
+                        -128,127 )
+                  endcase
+
+                  // [6] and [3] change the duration of each step
+
+                  case '6': case '3':
+                  data!(cur_row*3) := limit(
+                        data!(cur_row*3) + (key='3')-(key='6'),
+                        0,255 )
+                  endcase
+
+                  // Set repeating/non-repeating
+                  // A tone envelope can be made to repeat itself while a sound
+                  // is being played. A vibrato effect can be achieved by the
+                  // repeating of a simple step-up step-down envelope.
+
+                  case 'R':
+                  unless volume
+                  $(
+                        !data := !data neqv #x80
+                        disp_env()
+                  $)
+                  endcase
+
+                  // Alter envelope being edited
+                  // Pressing a letter changes the envelope being edited to that
+                  // letter.
+
+                  default:
+                  if 'A' <= key <= 'O'
+                  $(
+                        env := key
+                        data := env_address(volume,env)
+                        disp_env()
+                  $)
+            $)
+      $)
+      repeatuntil key=13      // finish session on ENTER key
+
+      // Clear the command window (includes the half windows)
+      stream(command_wndw)
+      cls()
+$)
+
+//    INSERT A BEAT LENGTH CHANGE IN MUSIC
+// A beat-length-change (blc) allows the speed of the music to be changed while
+// it is playing. The blc alters the speed by a percentage, so that if the
+// overall beat_length is altered, the relative speed change is the same.
+
+and insert_blc() be
+$(
+      static $( ev = void; change = void $)
+
+      // If there is already a beat-length-change at the cursor, delete it.
+      ev := find_event( cur_time, 12 )
+      unless ev=-1
+      $(
+            delete_event(ev)
+            placing := ev
+      $)
+
+      // Ask the user by how many percent the new blc will change the speed.
+      // Entering 0 has the effect of deleting an existing blc.
+      stream(prompt_wndw)
+      $(
+            puts("*pType the percental beat length change (0, 10 to 255):")
+            change := getint()
+      $)
+      repeatuntil 10<=change<=255 | change=0
+      cls()
+
+      test change
+      $(
+            // Insert a beat-length-change event with the new value.
+            insert_event( placing, cur_time, (12<<8) | change )
+            // Dislay the event
+            disp_event(placing)
+      $)
+      else
+            // Display the whole music, thus deleting the blc.
+            disp_music()      // NB no fade-out
+$)
+
+
+//    INSERT A GO-TO-BAR
+// A go-to-bar event (gtb) allows the music to be looped. By using time-bar
+// events it is possible to have a finite loop count.
+
+and insert_gtb() be
+$(
+      static $( ev = void; bar = void $)
+
+      // Check if there is already a go-to-bar, and delete it.
+      ev := find_event(cur_time, -1)
+      unless ev=-1
+      $(
+            delete_event(ev)
+            placing := ev
+      $)
+
+      // Prompt for the bar which the music will skip to.
+      // Entering 0 will have the effect of deleting an existing gtb.
+      stream(prompt_wndw)
+      puts("*pType the bar number to go to:")
+      bar := getint()
+      cls()
+
+      test bar
+      $(
+            // Insert a go-to-bar event, with the new data
+            insert_event( placing, cur_time, -bar )
+            // Display the new event
+            disp_event(placing)
+      $)
+      else
+            // Display the music, without the gtb.
+            disp_music()      // NB no fade-out
+$)
+
+
+//    INSERT A TIME BAR
+// A time-bar event (tb) allows a bar to be played a finite number of times,
+// before it is skipped. The effect is analogous to the time-bar in standard
+// musical notation.
+
+and insert_tb() be
+$(
+      static $( ev = void; bar = void; size = void $)
+
+      // Check if there is already a time-bar, and delete it.
+      // Since a time bar may have several different "type" values, a search
+      // of all possible values is made.
+      for i=13 to 20
+      $(
+            ev := find_event(cur_time, i)
+            if ev>=0 then break
+      $)
+
+      unless ev=-1
+      $(
+            delete_event(ev)
+            placing := ev
+      $)
+
+      // Prompt for number of repeats allowed. Entering 0 has the effect of
+      // deleting an existing time-bar.
+      stream(prompt_wndw)
+      $(
+            puts("*pType the number of plays before the bar is skipped *
+                  *(1 to 15):")
+            bar := getint()
+      $)
+      repeatuntil 0<=bar<=15
+      cls()
+
+      // unless zero was typed...
+      test bar
+      $(
+            // Prompt for the number of bars to skip, once the play count has
+            // been reached.
+            $(
+                  puts("*pType the number of bars to skip (1 to 8):")
+                  size := getint()
+            $)
+            repeatuntil 1<=size<=8
+            cls()
+                  
+            // Insert a time bar event with the new values.
+            insert_event( placing, cur_time, ((12+size)<<8) | bar )
+            // Display the event
+            disp_event(placing)
+      $)
+      else
+            // Display the music, without the event.
+            disp_music()      // NB no fade-out
+$)
+     
+
+//    PLAY THE MUSIC
+// The music is played from the given start time to the given end time
+// inclusive. If the flow of music goes outside the range given the music is
+// stopped. The music is also stopped if a key is pressed.
+
+and play_music(start,end) be
+$(
+      // Local variables
+
+      static
+      $(
+            // Faster access storage for events.
+            ev = void; data = void
+
+            // The current time in terms of beats.
+            time = void
+
+            // These are the envelopes, changed by permanant envelope changes
+            // in the music.
+            volA = void; volB = void; volC = void
+            toneA= void; toneB= void; toneC= void
+
+            // These flags indicate whether there is a musical note at this
+            // time on each channel.
+            note_on_A = void
+            note_on_B = void
+            note_on_C = void
+
+            beat_time = void        // The beat length DURING the music
+            last_clock= void        // see zero_clock() and wait_clock()
+            go_to_bar = void        // used when a go-to-bar is requested
+      $)
+
+      // Local routine, returns the tone period of a note.
+      // The period is used by the hardware, and represents the actual period
+      // of the sound waves emitted by the chip.
+      // NB non-sounds (note 0) return a value of zero
+      // The routine looks up period on the lowest octave, and divide by two
+      // for each octave. Musical notes double in frequency for each octave.
+
+      let period(note) = ( (note & #x0F) ! table 0,
+            3822,3608,3405,3214,3034,2863,2703,2551,2408,2273,2145,2025) >>
+            ( ( (note & #xF0) >> 4) +1)
+
+
+      // Local routine, sets the time on the firmware clock to zero. The firmware
+      // clock ticks at 300Hz, and is maintained automatically.
+      let zero_clock(beat) be
+      $(
+            inline #x11,0,0         // ld de,0
+            inline #x21,0,0         // ld hl,0
+            inline #xCD,#x10,#xBD   // call kl_time_set
+            last_clock := 0
+      $)
+
+      // Local routine, waits for beat_time ticks of the firmware clock since
+      // the last time the routine was called (or the clock zeroed).
+      let wait_clock() be
+      $(
+            // Local local routine, returns the bottom 16 bits of the firmware
+            // clock.
+            let clock() = valof
+            $(
+                  let time=?
+                  // get the firmware clock
+                  inline #xCD,#x0D,#xBD     // call kl_time_please
+                  inline #xDD,#x74,121      // ld (ix+121),h
+                  inline #xDD,#x75,120      // ld (ix+120),l
+                  resultis time
+            $)
+                  
+            // Wait for beat_time ticks
+            while clock()-last_clock < beat_time
+                  loop
+            // Store the current time for next call of wait_clock()
+            last_clock := last_clock + beat_time
+      $)
+
+      // Stack variables for play_music()
+
+      let soundA = vec 6      // } These blocks are fed to the OS to form
+      and soundB = vec 6      // } the sounds. The entries are altered by
+      and soundC = vec 6      // } the events in the music arrays.
+
+      // Set up the inital data in the sound blocks and envelopes.
+      // These blocks are altered as the music changes. The information stored
+      // is:      element     data
+      //          0           channel status, bit 7=new sound, bit 0,1,2=A,B,C
+      //          1           tone period of sound
+      //          2           duration of sound (can be ignored if envelope used)
+      //          3           volume of sound (can also be ignored)
+      //          4           volume envelope number
+      //          5           tone envelope number
+      //          6           noise period (0 for no noise)
+
+      read_data( soundA, -1, 129, 0, 0, 0, 0, 0, 0, -1 )
+      read_data( soundB, -1, 130, 0, 0, 0, 0, 0, 0, -1 )
+      read_data( soundC, -1, 132, 0, 0, 0, 0, 0, 0, -1 )
+
+      // Initially the volume envelopes are all set to A, and the tone
+      // envelopes are not set.
+
+      volA := 1; volB := 1; volC := 1
+      toneA:= 0; toneB:= 0; toneC:= 0
+
+      // Copy the beat length and time into working variables
+
+      beat_time := beat_length
+      time := start
+
+      // Clear the go_to_bar flag
+
+      go_to_bar := -1
+
+      // Send all the envelopes to the firmware
+      set_all_env()
+
+      // Zero all time bar counts in the music
+
+      for i=0 to free_space-1
+            // Is the event a time bar?
+            if 13 <= (event!i >> 8) <= 20
+                  // mask out any counts
+                  event!i := event!i & #xFF0F
+
+      // Find the first event after the supplied start time
+
+      ev := event_after(time)
+
+      // Zero the clock
+      zero_clock()
+
+      // Continue while the specified end time has not been exceeded, or until
+      // a key is pressed.
+
+      while start <= time <= end & not key_pressed()
+      $(
+            // Clear one-off events (noise and one-off envelopes)
+
+            soundA!6, soundB!6, soundC!6 := 0,0,0
+            soundA!4, soundB!4, soundC!4 := volA,volB,volC
+            soundA!5, soundB!5, soundC!5 := toneA,toneB,toneC
+            note_on_A, note_on_B, note_on_C := false, false, false
+
+            // Process all events which occur at this time
+
+            // Check for time match
+            while event_time!ev = time & ev < free_space
+            $(
+                  // extract the event data
+                  data := event!ev
+
+                  // switch on data type
+                  switchon data>>8 into
+                  $(
+                        // MUSICAL NOTES
+                        // Their period is calculated and entered into the sound
+                        // block. A flag is then set to indicate that a sound
+                        // has occurred and needs playing.
+
+                        case 0:
+                        soundA!1 := period(data & #xFF)
+                        note_on_A := true
+                        endcase
+
+                        case 1:
+                        soundB!1 := period(data & #xFF)
+                        note_on_B := true
+                        endcase
+
+                        case 2:
+                        soundC!1 := period(data & #xFF)
+                        note_on_C := true
+                        endcase
+
+                        // Noise mixed with the tone channels
+                        // Noise is entered into the sound blocks in the same
+                        // way as a note. However, a noise on its own does not
+                        // set the flag and cause the sound to be played.
+
+                        case 3:
+                        soundA!6 := data & #xFF
+                        endcase
+
+                        case 4:
+                        soundB!6 := data & #xFF
+                        endcase
+
+                        case 5:
+                        soundC!6 := data & #xFF
+                        endcase
+
+                        // Permanant envelope changes
+                        // Permanant changes are copied into the volX and toneX
+                        // variables, and so effect all subsequent notes. They
+                        // are also copied immediately into the sound blocks.
+
+                        case 6:
+                        unless (data & #xF0)=0
+                              volA := (data & #xF0) >> 4
+                        unless (data & #x0F)=0
+                              toneA := (data & #x0F)
+                        soundA!4, soundA!5 := volA, toneA
+                        endcase
+
+                        case 7:
+                        unless (data & #xF0)=0
+                              volB := (data & #xF0) >> 4
+                        unless (data & #x0F)=0
+                              toneB := (data & #x0F)
+                        soundB!4, soundB!5 := volB, toneB
+                        endcase
+
+                        case 8:
+                        unless (data & #xF0)=0
+                              volC := (data & #xF0) >> 4
+                        unless (data & #x0F)=0
+                              toneC := (data & #x0F)
+                        soundC!4, soundC!5 := volC, toneC
+                        endcase
+
+                        // One-off envelope changes
+                        // These envelopes are entered into the sound blocks
+                        // only, and so will effect only the note above which
+                        // they are placed.
+
+                        case 9:
+                        unless (data & #xF0)=0
+                              soundA!4 := (data & #xF0) >> 4
+                        unless (data & #x0F)=0
+                              soundA!5 := (data & #x0F)
+                        endcase
+
+                        case 10:
+                        unless (data & #xF0)=0
+                              soundB!4 := (data & #xF0) >> 4
+                        unless (data & #x0F)=0
+                              soundB!5 := (data & #x0F)
+                        endcase
+
+                        case 11:
+                        unless (data & #xF0)=0
+                              soundC!4 := (data & #xF0) >> 4
+                        unless (data & #x0F)=0
+                              soundC!5 := (data & #x0F)
+                        endcase
+
+                        // Change in beat length
+                        // The new beat_time is calculated from the old as a
+                        // percentage.
+
+                        case 12:
+                        beat_time := ( beat_time * (data & #xFF) )/100
+                        endcase
+
+                        // TIME BARS
+
+                        case 13: case 14: case 15: case 16:
+                        case 17: case 18: case 19: case 20:
+
+                        // Has the time bar already had its final play?
+
+                        test ((data >>4) & #x0F) >= (data & #x0F)
+                        $(
+                              // Skip the following bars
+                              go_to_bar :=
+                                    (time/bar_length+ (data>>8)-11 )*bar_length
+                              // And reset the play count for next time
+                              event!ev := event!ev & #xFF0F
+                        $)
+                        else
+                              // Increment the play count by one
+                              event!ev := event!ev + #x10
+                        endcase
+
+                        // Go to another bar in music
+                        // Note that this is caused by any event with a data
+                        // type less than zero. (MSB set)
+
+                        default:
+                        if data<0
+                              go_to_bar := (abs(data)-1) * bar_length
+                  $)
+
+                  // Move to the next event and process that (if occurs at this
+                  // time).
+                  ev := ev+1
+            $)
+
+            // Wait for the time at which the events sound. All the events for
+            // this time have been pre-processed, and so there will be no delay
+            // in sounding them.
+            wait_clock()
+
+            // Make the pre-prepared sounds
+            if note_on_A then sound(soundA)
+            if note_on_B then sound(soundB)
+            if note_on_C then sound(soundC)
+
+            // Has the music been requested to go to another bar?
+            test go_to_bar>=0
+            $(
+                  time := go_to_bar
+                  ev := event_after(time)
+                  go_to_bar := -1
+            $)
+            else
+                  // Go back and process the next set of events
+                  time := time+1
+      $)
+
+      // Move the cursor to wherever the music had got to before returning to
+      // editing.
+      cur_time := time
+$)
+
+
+// FILE CONTROL
+// A small sub-menu allows the saving and loading of music, as well as a
+// catalog of the disc or tape.
+
+and file_control() be
+$(
+      // Local routine, saves the entire music to disc or tape. The file used
+      // is a serial ASCII file, and the numeric data is stored in ASCII form.
+
+      let save_music() be
+      $(
+            let name=vec 8          // Space for filename string
+            and buffer=vec 1024     // 2K buffer for the OS
+
+            // Prompt for, and input, the name for the new file.
+
+            puts("*p       SAVE MUSIC*n*nInput name for file:")
+            gets(name,12)
+
+            // Try to open the new file
+            unless open_out(name,buffer)
+            $(
+                  // ERRORS: The operating system reports any errors, so just
+                  // wait for a key before aborting.
+                  getchar()
+                  return
+            $)
+
+            // Save the music speed and bar length
+            writen(beat_length)
+            writen(bar_length)
+
+            // Save the envelope shapes
+            for i=0 to nr_envelopes*16*2-1
+                  writen(envelopes!i)
+
+            // Save the music data, preceded by the length of the music array
+            writen(free_space)
+            for i=0 to free_space-1
+            $(
+                  writen(event_time!i)
+                  writen(event!i)
+            $)
+
+            // Close the file
+            unless close_out()
+                  // ERRORS: The operating system reports any errors, so just
+                  // wait for a key.
+                  getchar()
+      $)
+
+      // Local routine, load entire music. This routine is simply the inverse of
+      // the save routine above.
+
+      let load_music() be
+      $(
+            let name=vec 8          // Space for file name
+            and buffer=vec 1024     // 2K buffer for OS
+
+            // Prompt for, and input, the name of the file to load.
+
+            puts("*p       LOAD MUSIC*n*nInput name of file:")
+            gets(name,12)
+
+            // Try to open the file
+            unless open_in(name,buffer)
+            $(
+                  // ERRORS: The operating system reports any errors, so just
+                  // wait for a key before aborting.
+                  getchar()
+                  return
+            $)
+
+            // Load the music speed from the file.
+            // NB the ADDRESS of the destination variable is supplied to the
+            // readn() routine.
+            readn(@beat_length)
+            readn(@bar_length)
+
+            // Load the envelope shapes
+            for i=0 to nr_envelopes*16*2-1
+                  readn(envelopes+i)
+
+            // Load the music data, preceded by the length
+            readn(@free_space)
+            for i=0 to free_space-1
+            $(
+                  readn(event_time+i)
+                  readn(event+i)
+            $)
+
+            // Close the file
+            unless close_in()
+                  // ERRORS: The operating system reports any errors, so just
+                  // wait for a key before aborting.
+                  getchar()
+      $)
+
+      // Local routine, catalogs the disc or tape. This routine is built into
+      // the firmware, and must be supplied with a 2K buffer.
+      let catalog() be
+      $(
+            let buffer = vec 1024
+
+            // The whole screen is needed for a full disc catalog
+            mode(2)
+
+            // Call the OS to display a catalog
+            inline #xDD,#x6E,120    // LD L,(IX+120)
+            inline #xDD,#x66,121    // LD H,(IX+121)
+            inline #x29             // ADD HL,HL
+            inline #xEB             // EX DE,HL
+            inline #xDD,#xE5        // PUSH IX
+            inline #xCD,#x9B,#xBC   // CALL cas catalog
+            inline #xDD,#xE1        // POP IX
+
+            // Wait for a keypress
+            puts("Press ENTER to return to editing")
+            while getchar() \= 13
+                  loop
+
+            // Rebuild the music on the screen
+            setup_screen()
+      $)
+
+      // FILE CONTROL MENU
+
+      // Switch to command window, and display the file control menu.
+      stream(command_wndw)
+
+      puts( "*p       FILE OPERATIONS*n*
+            *S: Save music (including envelopes, speed etc)*n*
+            *L: Load music (as above)*n*
+            *C: Catalog disc/tape" )
+
+      $(
+            // Wait for a key
+            key := upper(getchar())
+
+            switchon key into
+            $(
+                  // Save the music
+                  case 'S':
+                  save_music()
+                  cls()
+                  return
+
+                  // Load some music
+                  case 'L':
+                  load_music()
+                  // Display the loaded music
+                  fade_out()
+                  cls()
+                  disp_music()
+                  disp_status()
+                  fade_in()
+                  return
+
+                  // Catalog the disc or tape
+                  case 'C':
+                  catalog()
+                  return
+
+                  // A key that was not on the menu has been pressed.
+                  default:
+                  putchar(7)  // BEEP
+            $)
+      $)
+      repeat      // until a valid key was pressed.
+$)
+
+
+//    DELETE THE EVENTS IN THE MARKED BLOCK
+// This is a complex process because although the block exists only on one
+// channel, the music array contains all the channels. Events which are in the
+// block must be searched for and deleted individualy.
+
+and delete_block() be
+$(
+      // Check that the user really wants to delete the block
+      stream(prompt_wndw)
+      puts("*pDelete block: are you sure? (Y/N)")
+            key := upper(getchar())
+      repeatuntil key='Y' | key='N'
+
+      cls()                         // clear the prompt window
+      if key='N' then return        // return if user was not sure.
+
+      puts("Deleting...")
+
+      // Delete events on the block channel.
+      del_events( event_after(bl_start), event_after(bl_end+1)-1, bl_channel)
+
+      // Display the changes
+      fade_out()
+      cls()                         // clear prompt window
+      disp_music()                  // re-display the music
+      fade_in()                     // fade in the changes.
+$)
+
+//    COPY EVENTS IN THE MARKED BLOCK TO THE CURSOR POSITION
+// This is a very complex operation, since the block position may be moved
+// by the act of inserting a new event. The routines find_first() and
+// find_next() overcome this difficulty by using the global variable block_ev,
+// which is altered by the insertion routine to ensure it remains on the same
+// event. The process if further complicated if the destination and source
+// channels are different. In this case the event data must be altered in order
+// to change channels.
+
+and copy_block() be
+$(
+      static
+      $(
+            // The block, in terms of events rather than time
+            start = void; end = void; length = void
+            // The destination, in terms of events rather than time
+            dest = void; dest_end = void; dest_chan = void
+      $)
+
+      // Move to the prompt window
+      stream(prompt_wndw)
+
+      // Find the position of the block
+
+      start := event_after(bl_start)
+      end := event_after(bl_end+1)-1
+      length := count_events(start,end,bl_channel)
+
+      // take no action if the block contains no events
+      unless start<=end
+            return
+
+      // Work out where the block is going
+      dest := event_after(cur_time)
+      dest_end := event_after(cur_time+ bl_end-bl_start +1)-1
+
+      // Noise, and control events cannot be copied to tone channels, (and vice
+      // versa) so the channel of the cursor is ignored in their case.
+      test bl_channel>=3
+            dest_chan := bl_channel // noise or control
+      else
+            dest_chan := cur_channel// tone
+
+      // Check that there is room in the music for a copy
+
+      if free_space + end-start +1 > music_size
+      $(
+            puts("*p*x07Not enough room for a copy. Press a key.")
+            getchar()               // wait for a key
+            cls()
+            return
+      $)
+
+      // Check that source and destination do not overlap. (There is no problem
+      // if the source and destination are on different channels, or if the
+      // destination area is empty.)
+
+      // pseudo-code for the next if statement:
+      // if the source and destination are on the same channel, and there are
+      // some events in the destination area, and either the start of the
+      // destination is inside the source area, or the start of the source is
+      // in the destination area, then there is a problem!
+
+      if dest_chan=bl_channel & dest<=dest_end &
+            ( start<=dest<=end | dest<=start<=dest_end )
+      $(
+            puts("*p*x07Cannot copy: block and destination overlap. *
+                  *Press a key.")
+            getchar()
+            cls()
+            return
+      $)
+
+      puts("*pCopying...")
+
+      // Delete events in the destination area
+      if dest<free_space
+            del_events(dest, dest_end, dest_chan)
+
+      // Copy the block into position
+
+      // Find the first event in the block
+      find_first()
+
+      $(
+            // Get event from block, and calculate its new time.
+            let ev = event!block_ev
+            and new_time = event_time!block_ev - bl_start + cur_time
+
+            // Change the channel of the event if necessary. This is done by
+            // rounding the event status to the nearest three, and adding the
+            // destination channel. This cannot occur with control and noise
+            // events, since dest_chan=bl_channel
+
+            unless dest_chan=bl_channel
+                  ev := ev & #xFF | (((ev>>8)/3)*3 + dest_chan )<<8
+
+            // Insert the copy into its new position in the music
+            insert_event( event_after(new_time), new_time, ev)
+
+            // Find the next event in the block
+            find_next()
+      $)
+      repeatuntil block_ev=-1       // until there are no more events.
+
+      // Display the changes
+      fade_out()
+      cls()
+      disp_music()
+      fade_in()
+$)
+
+//    TRANSPOSE THE BLOCK
+
+and transpose() be
+$(
+      static $( offset = void $)
+
+      stream(prompt_wndw)           // input is in the prompt window
+
+      // Prompt for the transposal distance
+      $(
+            puts("*pEnter the number of semitones to transpose by (-60 to 60):")
+            offset := getint()
+      $)
+      repeatuntil -60 <= offset <= 60
+                                    // check for legal values
+      cls()                         // clear prompt window
+
+      // Do nothing if no offset given.
+      unless offset
+            return
+
+      // Transpose the notes in the block.
+      find_first()
+      until block_ev=-1             // until end of block
+      $(
+            let data = event!block_ev
+                                    // get data from event
+
+            // Only transpose musical notes
+            if 0 <= (data >> 8) <= 2
+                  // mask in the new note data
+                  event!block_ev := (data & #xFF00) | trans_note(data,offset)
+
+            // find next event in block
+            find_next()
+      $)
+
+      // Display the changes
+      fade_out()
+      disp_music()
+      fade_in()
+$)
+
+//////////////////////// END OF CLAVICOM SOURCE FILE 2 ////////////////////////
